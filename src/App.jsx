@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
-import { Upload, HardHat, Download, FileText } from 'lucide-react';
+import { Upload, Download, FileText, UploadCloud, LayoutGrid } from 'lucide-react';
 
 export default function App() {
   const [siteData, setSiteData] = useState([]);
@@ -45,12 +45,17 @@ export default function App() {
 
         const col0Clean = col0.replace(/[^A-Z]/g, '');
         if (col0Clean === "SN" || col0Clean === "SNO" || col0 === "S.N.") {
-          dayHeaders = {};
+          let tempHeaders = {};
           for (let c = 2; c < row.length; c++) {
             const val = String(row[c]).trim();
             if (/^\d+$/.test(val)) {
-              dayHeaders[c] = val;
+              tempHeaders[c] = val;
             }
+          }
+          // Fail-safe: Only update headers if we actually found days. 
+          // Prevents overriding with a blank secondary S.N. row.
+          if (Object.keys(tempHeaders).length > 0) {
+            dayHeaders = tempHeaders;
           }
           continue;
         }
@@ -134,7 +139,7 @@ export default function App() {
     const ws = XLSX.utils.json_to_sheet(formattedData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Attendance Data");
-    XLSX.writeFile(wb, `ContecBuildFlow_${sheetName}_${activeTab === 'day' ? 'DayWise' : 'SiteWise'}.xlsx`);
+    XLSX.writeFile(wb, `CRM_FIX_${sheetName}_${activeTab === 'day' ? 'DayWise' : 'SiteWise'}.xlsx`);
   };
 
   const exportToPDF = () => {
@@ -143,11 +148,11 @@ export default function App() {
     
     doc.setFontSize(16);
     doc.setTextColor(37, 99, 235);
-    doc.text("ContecBuildFlow", 14, 15);
+    doc.text("CRM_FIX", 14, 15);
     
     doc.setFontSize(10);
     doc.setTextColor(100);
-    doc.text(`Contec Solutions | Sheet: ${sheetName} | ${viewTitle}`, 14, 22);
+    doc.text(`Sheet: ${sheetName} | ${viewTitle}`, 14, 22);
     
     const dataToExport = activeTab === 'site' ? siteData : dayData;
     
@@ -169,147 +174,180 @@ export default function App() {
       headStyles: { fillColor: [37, 99, 235] }
     });
     
-    doc.save(`ContecBuildFlow_${sheetName}_${activeTab === 'day' ? 'DayWise' : 'SiteWise'}.pdf`);
+    doc.save(`CRM_FIX_${sheetName}_${activeTab === 'day' ? 'DayWise' : 'SiteWise'}.pdf`);
   };
 
   const displayData = activeTab === 'site' ? siteData : dayData;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 md:p-8 text-gray-800">
-      <div className="max-w-5xl mx-auto space-y-6">
-        
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="bg-blue-600 p-2 rounded-lg text-white">
-                <HardHat className="w-6 h-6" />
+    <div className="min-h-screen bg-[#f8fafc] text-gray-800 font-sans selection:bg-blue-100 selection:text-blue-900">
+      <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+      
+      {/* --- EMPTY STATE (BEFORE UPLOAD) --- */}
+      {displayData.length === 0 ? (
+        <div className="flex flex-col items-center justify-center min-h-screen px-4">
+          <div className="text-center mb-10 space-y-2">
+            <div className="inline-flex items-center justify-center p-3 bg-blue-600 rounded-2xl shadow-lg shadow-blue-600/20 mb-4">
+              <LayoutGrid className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-4xl md:text-5xl font-black tracking-tight text-gray-900">
+              CRM_FIX
+            </h1>
+            <p className="text-lg font-medium text-gray-500 uppercase tracking-widest">
+              Day Wise - Site wise Evaluation
+            </p>
+          </div>
+
+          <div 
+            onClick={() => fileInputRef.current?.click()}
+            className="group w-full max-w-2xl cursor-pointer bg-white rounded-3xl border-2 border-dashed border-gray-300 hover:border-blue-500 hover:bg-blue-50/50 transition-all duration-300 p-12 md:p-20 shadow-sm hover:shadow-xl text-center"
+          >
+            <div className="flex flex-col items-center justify-center space-y-6">
+              <div className="bg-blue-100/50 text-blue-600 p-6 rounded-full group-hover:scale-110 group-hover:bg-blue-100 transition-all duration-300">
+                <UploadCloud className="w-12 h-12" />
               </div>
               <div>
-                <h1 className="text-2xl font-black tracking-tight text-gray-900">
+                <p className="text-2xl font-bold text-gray-800">Upload Attendance Sheet</p>
+                <p className="text-gray-500 mt-2">Upload a single sheet for 100% accurate daily/site parsing.</p>
+              </div>
+              <span className="mt-4 px-8 py-3 bg-gray-900 text-white font-semibold rounded-xl shadow-md group-hover:bg-blue-600 transition-colors duration-300 flex items-center gap-2">
+                <Upload className="w-4 h-4" />
+                Select File
+              </span>
+            </div>
+          </div>
+        </div>
+      ) : (
+
+      /* --- DATA VIEW (AFTER UPLOAD) --- */
+        <div className="max-w-6xl mx-auto space-y-6 p-4 md:p-8 pt-8">
+          
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div className="flex items-center gap-4">
+              <div className="bg-blue-600 p-2.5 rounded-xl text-white shadow-sm">
+                <LayoutGrid className="w-6 h-6" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-black tracking-tight text-gray-900 leading-none">
                   CRM_FIX
                 </h1>
-                <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Day Wise - Site wise Evaluation</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mt-1">Day Wise - Site wise Evaluation</p>
               </div>
             </div>
-            <p className="text-gray-500 text-sm mt-2">Upload a single sheet for 100% accurate daily/site parsing.</p>
-          </div>
-          
-          <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            className="w-full md:w-auto justify-center bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium flex items-center gap-2 shadow-sm transition-all"
-          >
-            <Upload className="w-5 h-5" />
-            Upload Sheet
-          </button>
-        </div>
-
-        {displayData.length > 0 && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
             
-            <div className="flex flex-col sm:flex-row justify-between items-center border-b border-gray-200 bg-gray-50">
-              <div className="flex w-full sm:w-auto border-r border-gray-200">
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full md:w-auto justify-center bg-gray-100 hover:bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 transition-all"
+            >
+              <Upload className="w-4 h-4" />
+              Upload New Sheet
+            </button>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            
+            <div className="flex flex-col md:flex-row justify-between items-center border-b border-gray-100 bg-gray-50/50 p-2 gap-2">
+              <div className="flex w-full md:w-auto bg-gray-100 p-1 rounded-xl">
                 <button 
-                  className={`flex-1 sm:flex-none px-6 py-4 font-semibold text-sm transition-colors ${activeTab === 'day' ? 'text-blue-600 border-b-2 border-blue-600 bg-white' : 'text-gray-500 hover:bg-gray-100'}`}
+                  className={`flex-1 md:flex-none px-6 py-2.5 font-bold text-sm rounded-lg transition-all ${activeTab === 'day' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                   onClick={() => setActiveTab('day')}
                 >
                   Day-Wise View
                 </button>
                 <button 
-                  className={`flex-1 sm:flex-none px-6 py-4 font-semibold text-sm transition-colors ${activeTab === 'site' ? 'text-blue-600 border-b-2 border-blue-600 bg-white' : 'text-gray-500 hover:bg-gray-100'}`}
+                  className={`flex-1 md:flex-none px-6 py-2.5 font-bold text-sm rounded-lg transition-all ${activeTab === 'site' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                   onClick={() => setActiveTab('site')}
                 >
                   Site-Wise View
                 </button>
               </div>
 
-              <div className="p-3 w-full sm:w-auto flex gap-2 justify-end bg-gray-50">
+              <div className="flex w-full md:w-auto gap-2">
                 <button 
                   onClick={exportToExcel}
-                  className="flex-1 sm:flex-none justify-center text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md flex items-center gap-2 transition-colors shadow-sm"
+                  className="flex-1 md:flex-none justify-center text-sm font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors border border-emerald-200"
                 >
                   <Download className="w-4 h-4" />
-                  Excel
+                  Export Excel
                 </button>
                 <button 
                   onClick={exportToPDF}
-                  className="flex-1 sm:flex-none justify-center text-sm bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-md flex items-center gap-2 transition-colors shadow-sm"
+                  className="flex-1 md:flex-none justify-center text-sm font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors border border-rose-200"
                 >
                   <FileText className="w-4 h-4" />
-                  PDF
+                  Export PDF
                 </button>
               </div>
             </div>
 
-            <div className="overflow-x-auto max-h-[600px] bg-gray-50 md:bg-white">
+            <div className="overflow-x-auto max-h-[650px] bg-gray-50 md:bg-white custom-scrollbar">
               
-              {/* Desktop Table View */}
+              {/* Desktop Table */}
               <table className="w-full text-sm text-left hidden md:table">
-                <thead className="bg-gray-100 uppercase text-xs text-gray-700 sticky top-0 z-10">
+                <thead className="bg-gray-50/80 uppercase text-[11px] font-black tracking-wider text-gray-500 sticky top-0 z-10 backdrop-blur-md">
                   <tr>
-                    {activeTab === 'day' && <th className="px-6 py-3 border-r bg-gray-100">Day</th>}
-                    <th className="px-6 py-3 border-r bg-gray-100">Site Code</th>
-                    <th className="px-6 py-3 border-r bg-blue-50/70 text-blue-900">Mason Days</th>
-                    <th className="px-6 py-3 border-r bg-blue-50/70 text-blue-900">Mason Extra</th>
-                    <th className="px-6 py-3 border-r bg-orange-50/70 text-orange-900">Helper Days</th>
-                    <th className="px-6 py-3 bg-orange-50/70 text-orange-900">Helper Extra</th>
+                    {activeTab === 'day' && <th className="px-6 py-4 border-b border-r border-gray-100">Day</th>}
+                    <th className="px-6 py-4 border-b border-r border-gray-100">Site Code</th>
+                    <th className="px-6 py-4 border-b border-r border-gray-100 text-blue-800 bg-blue-50/30">Mason Days</th>
+                    <th className="px-6 py-4 border-b border-r border-gray-100 text-blue-800 bg-blue-50/30">Mason Extra</th>
+                    <th className="px-6 py-4 border-b border-r border-gray-100 text-orange-800 bg-orange-50/30">Helper Days</th>
+                    <th className="px-6 py-4 border-b border-gray-100 text-orange-800 bg-orange-50/30">Helper Extra</th>
                   </tr>
                 </thead>
                 <tbody>
                   {displayData.map((row, idx) => (
-                    <tr key={idx} className="border-b hover:bg-gray-50 bg-white">
-                      {activeTab === 'day' && <td className="px-6 py-3 border-r font-bold text-gray-900">{row.day}</td>}
-                      <td className="px-6 py-3 border-r font-bold text-gray-800">{row.site}</td>
-                      <td className="px-6 py-3 border-r">{row.masonReg}</td>
-                      <td className="px-6 py-3 border-r">{row.masonOT}</td>
-                      <td className="px-6 py-3 border-r">{row.helperReg}</td>
-                      <td className="px-6 py-3">{row.helperOT}</td>
+                    <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50/80 bg-white transition-colors">
+                      {activeTab === 'day' && <td className="px-6 py-4 border-r border-gray-50 font-bold text-gray-900">{row.day}</td>}
+                      <td className="px-6 py-4 border-r border-gray-50 font-bold text-gray-700">{row.site}</td>
+                      <td className="px-6 py-4 border-r border-gray-50 font-medium">{row.masonReg}</td>
+                      <td className="px-6 py-4 border-r border-gray-50 text-gray-500">{row.masonOT}</td>
+                      <td className="px-6 py-4 border-r border-gray-50 font-medium">{row.helperReg}</td>
+                      <td className="px-6 py-4 text-gray-500">{row.helperOT}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
 
-              {/* Mobile Card View */}
+              {/* Mobile Cards */}
               <div className="block md:hidden p-4 space-y-4">
                 {displayData.map((row, idx) => (
-                  <div key={idx} className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 space-y-3">
-                    <div className="flex justify-between items-center border-b border-gray-100 pb-2">
-                      <span className="text-sm font-black text-gray-800 bg-gray-100 px-3 py-1 rounded-md">
+                  <div key={idx} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4">
+                    <div className="flex justify-between items-center border-b border-gray-50 pb-3">
+                      <span className="text-sm font-black text-gray-800 bg-gray-100 px-3 py-1.5 rounded-lg">
                         Site: {row.site}
                       </span>
                       {activeTab === 'day' && (
-                        <span className="text-xs font-bold text-blue-700 bg-blue-100 px-3 py-1 rounded-md">
+                        <span className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg">
                           Day {row.day}
                         </span>
                       )}
                     </div>
                     
                     <div className="grid grid-cols-2 gap-3 text-xs">
-                      <div className="bg-blue-50/50 p-2.5 rounded-lg border border-blue-100">
-                        <p className="text-blue-600/80 font-semibold mb-1 uppercase tracking-wider text-[10px]">Mason Days</p>
-                        <p className="text-base font-black text-blue-900">{row.masonReg}</p>
+                      <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                        <p className="text-gray-500 font-bold mb-1 uppercase tracking-wider text-[10px]">Mason Days</p>
+                        <p className="text-lg font-black text-gray-900">{row.masonReg}</p>
                       </div>
-                      <div className="bg-blue-50/50 p-2.5 rounded-lg border border-blue-100">
-                        <p className="text-blue-600/80 font-semibold mb-1 uppercase tracking-wider text-[10px]">Mason Extra</p>
-                        <p className="text-base font-black text-blue-900">{row.masonOT} <span className="text-xs font-normal">hrs</span></p>
+                      <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                        <p className="text-gray-500 font-bold mb-1 uppercase tracking-wider text-[10px]">Mason Extra</p>
+                        <p className="text-lg font-black text-gray-900">{row.masonOT} <span className="text-xs font-medium text-gray-400">hrs</span></p>
                       </div>
-                      <div className="bg-orange-50/50 p-2.5 rounded-lg border border-orange-100">
-                        <p className="text-orange-600/80 font-semibold mb-1 uppercase tracking-wider text-[10px]">Helper Days</p>
-                        <p className="text-base font-black text-orange-900">{row.helperReg}</p>
+                      <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                        <p className="text-gray-500 font-bold mb-1 uppercase tracking-wider text-[10px]">Helper Days</p>
+                        <p className="text-lg font-black text-gray-900">{row.helperReg}</p>
                       </div>
-                      <div className="bg-orange-50/50 p-2.5 rounded-lg border border-orange-100">
-                        <p className="text-orange-600/80 font-semibold mb-1 uppercase tracking-wider text-[10px]">Helper Extra</p>
-                        <p className="text-base font-black text-orange-900">{row.helperOT} <span className="text-xs font-normal">hrs</span></p>
+                      <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                        <p className="text-gray-500 font-bold mb-1 uppercase tracking-wider text-[10px]">Helper Extra</p>
+                        <p className="text-lg font-black text-gray-900">{row.helperOT} <span className="text-xs font-medium text-gray-400">hrs</span></p>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
-
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
