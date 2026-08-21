@@ -2,11 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
-import { Upload, Download, FileText, UploadCloud, LayoutGrid, Search, Save, Trash2, Database, Clock, Check } from 'lucide-react';
+import { Upload, Download, FileText, UploadCloud, LayoutGrid, Search, Save, Trash2, Database, Clock, Check, BarChart3, Edit2 } from 'lucide-react';
 
-// FIREBASE IMPORTS
-import { collection, addDoc, getDocs, deleteDoc, doc } from "firebase/firestore";
-import { db } from './firebase'; // Connects to your new firebase.js file
+// FIREBASE IMPORTS (Added updateDoc for renaming)
+import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc } from "firebase/firestore";
+import { db } from './firebase'; 
 
 export default function App() {
   const [siteData, setSiteData] = useState([]);
@@ -16,14 +16,16 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const fileInputRef = useRef(null);
 
-  // NEW: Firebase & Dashboard States
-  const [dashboardTab, setDashboardTab] = useState('upload'); // 'upload' or 'records'
+  // Dashboard States
+  const [dashboardTab, setDashboardTab] = useState('upload'); 
   const [savedSheets, setSavedSheets] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
   const [hasSavedCurrent, setHasSavedCurrent] = useState(false);
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
+  
+  // Analytics State
+  const [globalSearch, setGlobalSearch] = useState("");
 
-  // FETCH RECORDS FROM FIREBASE
   const fetchSavedSheets = async () => {
     setIsLoadingRecords(true);
     try {
@@ -32,7 +34,6 @@ export default function App() {
       querySnapshot.forEach((doc) => {
         sheets.push({ id: doc.id, ...doc.data() });
       });
-      // Sort newest first
       sheets.sort((a, b) => b.createdAt - a.createdAt);
       setSavedSheets(sheets);
     } catch (error) {
@@ -41,7 +42,6 @@ export default function App() {
     setIsLoadingRecords(false);
   };
 
-  // LOAD ON MOUNT
   useEffect(() => {
     fetchSavedSheets();
   }, []);
@@ -50,16 +50,18 @@ export default function App() {
     const file = e.target.files[0];
     if (!file) return;
 
+    // USE THE ACTUAL FILE NAME (stripping the .xlsx/.csv extension for a clean look)
+    const cleanFileName = file.name.replace(/\.[^/.]+$/, "");
+
     const reader = new FileReader();
     reader.onload = (evt) => {
       const bstr = evt.target.result;
       const wb = XLSX.read(bstr, { type: 'binary' });
       let rawData = [];
 
-      const currentSheetName = wb.SheetNames[0];
-      setSheetName(currentSheetName);
-      const sheet = wb.Sheets[currentSheetName];
-      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+      setSheetName(cleanFileName); // Using the actual file name here!
+      const currentSheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(currentSheet, { header: 1, defval: "" });
 
       let activeSection = "Helper"; 
       let dayHeaders = {};
@@ -160,14 +162,12 @@ export default function App() {
       });
       setDayData(Object.values(dMap).sort((a, b) => a.day - b.day || a.site.localeCompare(b.site)));
       
-      // Reset saves and search
       setHasSavedCurrent(false);
       setSearchQuery("");
     };
     reader.readAsBinaryString(file);
   };
 
-  // SAVE TO FIREBASE
   const saveToDatabase = async () => {
     if (hasSavedCurrent) return;
     setIsSaving(true);
@@ -180,25 +180,48 @@ export default function App() {
       });
       
       setHasSavedCurrent(true);
-      // Update local state so it appears in the dashboard instantly
       setSavedSheets([{ id: docRef.id, sheetName, siteData, dayData, createdAt: Date.now() }, ...savedSheets]);
     } catch (error) {
       console.error("Error saving document: ", error);
-      alert("Failed to save to cloud. Check console for details.");
+      alert("Failed to save to cloud.");
     }
     setIsSaving(false);
   };
 
-  // DELETE FROM FIREBASE
-  const deleteRecord = async (id, e) => {
-    e.stopPropagation(); // Prevents opening the record when clicking delete
-    if (!window.confirm("Are you sure you want to permanently delete this record?")) return;
+  // --- NEW RENAME FUNCTION ---
+  const renameRecord = async (id, currentName, e) => {
+    e.stopPropagation(); // Stop the card from opening
+    const newName = window.prompt("Enter a new name for this sheet:", currentName);
     
+    if (!newName || newName.trim() === "" || newName === currentName) return;
+
+    try {
+      // 1. Update Firebase
+      await updateDoc(doc(db, "attendance_sheets", id), {
+        sheetName: newName.trim()
+      });
+      
+      // 2. Update Dashboard UI instantly
+      setSavedSheets(savedSheets.map(sheet => 
+        sheet.id === id ? { ...sheet, sheetName: newName.trim() } : sheet
+      ));
+      
+      // 3. Update the top header if you happen to be viewing this exact sheet right now
+      if (hasSavedCurrent && sheetName === currentName) {
+        setSheetName(newName.trim());
+      }
+    } catch (error) {
+      console.error("Error renaming document: ", error);
+      alert("Failed to rename the record.");
+    }
+  };
+
+  const deleteRecord = async (id, e) => {
+    e.stopPropagation(); 
+    if (!window.confirm("Are you sure you want to permanently delete this record?")) return;
     try {
       await deleteDoc(doc(db, "attendance_sheets", id));
       setSavedSheets(savedSheets.filter(sheet => sheet.id !== id));
-      
-      // If they deleted the one they are currently looking at, clear the screen
       if (hasSavedCurrent) {
         setSiteData([]);
         setDayData([]);
@@ -208,22 +231,45 @@ export default function App() {
     }
   };
 
-  // LOAD FROM DASHBOARD
   const loadSavedRecord = (sheet) => {
     setSheetName(sheet.sheetName);
     setSiteData(sheet.siteData);
     setDayData(sheet.dayData);
-    setHasSavedCurrent(true); // Already saved since it came from DB
+    setHasSavedCurrent(true); 
     setSearchQuery("");
   };
 
-  // Filter Data
-  const activeData = activeTab === 'site' ? siteData : dayData;
-  const filteredData = activeData.filter(row => 
-    row.site.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const getGlobalAnalytics = () => {
+    if (!globalSearch.trim()) return null;
+    const targetSite = globalSearch.toLowerCase().trim();
+    
+    let results = [];
+    let totals = { masonReg: 0, masonOT: 0, halfMasonReg: 0, halfMasonOT: 0, helperReg: 0, helperOT: 0 };
 
-  // Dynamic Totals
+    savedSheets.forEach(sheet => {
+      const siteMatch = sheet.siteData.find(s => s.site.toLowerCase() === targetSite);
+      if (siteMatch) {
+        results.push({
+          sheetName: sheet.sheetName,
+          date: sheet.createdAt,
+          ...siteMatch
+        });
+        totals.masonReg += siteMatch.masonReg || 0;
+        totals.masonOT += siteMatch.masonOT || 0;
+        totals.halfMasonReg += siteMatch.halfMasonReg || 0;
+        totals.halfMasonOT += siteMatch.halfMasonOT || 0;
+        totals.helperReg += siteMatch.helperReg || 0;
+        totals.helperOT += siteMatch.helperOT || 0;
+      }
+    });
+    
+    return { results, totals };
+  };
+
+  const analyticsData = getGlobalAnalytics();
+
+  const activeData = activeTab === 'site' ? siteData : dayData;
+  const filteredData = activeData.filter(row => row.site.toLowerCase().includes(searchQuery.toLowerCase()));
   const totals = filteredData.reduce((acc, row) => {
     acc.masonReg += row.masonReg || 0;
     acc.masonOT += row.masonOT || 0;
@@ -269,11 +315,9 @@ export default function App() {
   const exportToPDF = () => {
     const doc = new jsPDF();
     const viewTitle = activeTab === 'day' ? 'Day-Wise & Site-Wise Breakdown' : 'Total Site-Wise Summary';
-    
     doc.setFontSize(16);
     doc.setTextColor(37, 99, 235);
     doc.text("CRM_FIX", 14, 15);
-    
     doc.setFontSize(10);
     doc.setTextColor(100);
     doc.text(`Sheet: ${sheetName} | ${viewTitle}`, 14, 22);
@@ -292,16 +336,7 @@ export default function App() {
       ? ["", "TOTAL", totals.masonReg, totals.masonOT, totals.halfMasonReg, totals.halfMasonOT, totals.helperReg, totals.helperOT]
       : ["TOTAL", totals.masonReg, totals.masonOT, totals.halfMasonReg, totals.halfMasonOT, totals.helperReg, totals.helperOT];
 
-    doc.autoTable({
-      head: [tableColumn],
-      body: tableRows,
-      foot: [footRow],
-      startY: 28,
-      theme: 'grid',
-      headStyles: { fillColor: [37, 99, 235] },
-      footStyles: { fillColor: [243, 244, 246], textColor: [17, 24, 39], fontStyle: 'bold' }
-    });
-    
+    doc.autoTable({ head: [tableColumn], body: tableRows, foot: [footRow], startY: 28, theme: 'grid', headStyles: { fillColor: [37, 99, 235] }, footStyles: { fillColor: [243, 244, 246], textColor: [17, 24, 39], fontStyle: 'bold' } });
     doc.save(`CRM_FIX_${sheetName}_${activeTab === 'day' ? 'DayWise' : 'SiteWise'}.pdf`);
   };
 
@@ -309,12 +344,11 @@ export default function App() {
     <div className="min-h-screen bg-[#f8fafc] text-gray-800 font-sans selection:bg-blue-100 selection:text-blue-900">
       <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
       
-      {/* --- EMPTY STATE & DASHBOARD --- */}
+      {/* --- DASHBOARD / EMPTY STATE --- */}
       {activeData.length === 0 ? (
-        <div className="max-w-5xl mx-auto pt-16 px-4">
+        <div className="max-w-6xl mx-auto pt-16 px-4">
           
-          {/* Main Title Area */}
-          <div className="text-center mb-12 space-y-3">
+          <div className="text-center mb-10 space-y-3">
             <div className="inline-flex items-center justify-center p-3 bg-blue-600 rounded-2xl shadow-lg shadow-blue-600/20 mb-4">
               <LayoutGrid className="w-8 h-8 text-white" />
             </div>
@@ -322,81 +356,53 @@ export default function App() {
             <p className="text-lg font-medium text-gray-500 uppercase tracking-widest">Attendance & Analytics Engine</p>
           </div>
 
-          {/* Dashboard Navigation Tabs */}
           <div className="flex justify-center mb-8">
-            <div className="bg-gray-200/60 p-1.5 rounded-2xl inline-flex shadow-inner">
-              <button 
-                onClick={() => setDashboardTab('upload')}
-                className={`px-8 py-3 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${dashboardTab === 'upload' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-              >
-                <UploadCloud className="w-4 h-4" /> Upload New
-              </button>
-              <button 
-                onClick={() => { setDashboardTab('records'); fetchSavedSheets(); }}
-                className={`px-8 py-3 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${dashboardTab === 'records' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-              >
-                <Database className="w-4 h-4" /> Saved Records
-              </button>
+            <div className="bg-gray-200/60 p-1.5 rounded-2xl inline-flex shadow-inner overflow-x-auto max-w-full">
+              <button onClick={() => setDashboardTab('upload')} className={`whitespace-nowrap px-6 py-3 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${dashboardTab === 'upload' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}><UploadCloud className="w-4 h-4" /> Upload New</button>
+              <button onClick={() => { setDashboardTab('records'); fetchSavedSheets(); }} className={`whitespace-nowrap px-6 py-3 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${dashboardTab === 'records' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}><Database className="w-4 h-4" /> Saved Records</button>
+              <button onClick={() => { setDashboardTab('analytics'); fetchSavedSheets(); }} className={`whitespace-nowrap px-6 py-3 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${dashboardTab === 'analytics' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}><BarChart3 className="w-4 h-4" /> Global Analytics</button>
             </div>
           </div>
 
           {/* TAB 1: UPLOAD ZONE */}
           {dashboardTab === 'upload' && (
-            <div 
-              onClick={() => fileInputRef.current?.click()}
-              className="group w-full max-w-2xl mx-auto cursor-pointer bg-white rounded-3xl border-2 border-dashed border-gray-300 hover:border-blue-500 hover:bg-blue-50/50 transition-all duration-300 p-12 md:p-20 shadow-sm hover:shadow-xl text-center"
-            >
+            <div onClick={() => fileInputRef.current?.click()} className="group w-full max-w-2xl mx-auto cursor-pointer bg-white rounded-3xl border-2 border-dashed border-gray-300 hover:border-blue-500 hover:bg-blue-50/50 transition-all duration-300 p-12 md:p-20 shadow-sm hover:shadow-xl text-center">
               <div className="flex flex-col items-center justify-center space-y-6">
-                <div className="bg-blue-100/50 text-blue-600 p-6 rounded-full group-hover:scale-110 group-hover:bg-blue-100 transition-all duration-300">
-                  <UploadCloud className="w-12 h-12" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-gray-800">Upload Attendance Sheet</p>
-                  <p className="text-gray-500 mt-2">Parse and visualize your site data instantly.</p>
-                </div>
-                <span className="mt-4 px-8 py-3 bg-gray-900 text-white font-semibold rounded-xl shadow-md group-hover:bg-blue-600 transition-colors duration-300 flex items-center gap-2">
-                  <Upload className="w-4 h-4" />
-                  Select File
-                </span>
+                <div className="bg-blue-100/50 text-blue-600 p-6 rounded-full group-hover:scale-110 group-hover:bg-blue-100 transition-all duration-300"><UploadCloud className="w-12 h-12" /></div>
+                <div><p className="text-2xl font-bold text-gray-800">Upload Attendance Sheet</p><p className="text-gray-500 mt-2">Parse and visualize your site data instantly.</p></div>
+                <span className="mt-4 px-8 py-3 bg-gray-900 text-white font-semibold rounded-xl shadow-md group-hover:bg-blue-600 transition-colors duration-300 flex items-center gap-2"><Upload className="w-4 h-4" />Select File</span>
               </div>
             </div>
           )}
 
-          {/* TAB 2: SAVED RECORDS */}
+          {/* TAB 2: SAVED RECORDS (WITH RENAME BUTTON) */}
           {dashboardTab === 'records' && (
             <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-200 min-h-[400px]">
               {isLoadingRecords ? (
                 <div className="flex justify-center items-center h-48 text-gray-400 font-bold">Loading cloud records...</div>
               ) : savedSheets.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-48 text-gray-400 space-y-4">
-                  <Database className="w-12 h-12 text-gray-200" />
-                  <p className="font-semibold">No saved sheets found.</p>
-                </div>
+                <div className="flex flex-col items-center justify-center h-48 text-gray-400 space-y-4"><Database className="w-12 h-12 text-gray-200" /><p className="font-semibold">No saved sheets found.</p></div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {savedSheets.map((sheet) => (
-                    <div 
-                      key={sheet.id}
-                      onClick={() => loadSavedRecord(sheet)}
-                      className="group bg-gray-50 hover:bg-blue-50 border border-gray-100 hover:border-blue-200 rounded-2xl p-5 cursor-pointer transition-all flex flex-col justify-between space-y-4"
-                    >
+                    <div key={sheet.id} onClick={() => loadSavedRecord(sheet)} className="group bg-gray-50 hover:bg-blue-50 border border-gray-100 hover:border-blue-200 rounded-2xl p-5 cursor-pointer transition-all flex flex-col justify-between space-y-4">
                       <div className="flex items-start justify-between">
-                        <div className="bg-blue-100 text-blue-600 p-2.5 rounded-lg">
-                          <FileText className="w-5 h-5" />
+                        <div className="bg-blue-100 text-blue-600 p-2.5 rounded-lg"><FileText className="w-5 h-5" /></div>
+                        
+                        {/* EDIT AND DELETE BUTTONS */}
+                        <div className="flex gap-2">
+                          <button onClick={(e) => renameRecord(sheet.id, sheet.sheetName, e)} className="text-gray-400 hover:text-blue-500 transition-colors p-1" title="Rename Sheet">
+                            <Edit2 className="w-5 h-5" />
+                          </button>
+                          <button onClick={(e) => deleteRecord(sheet.id, e)} className="text-gray-400 hover:text-red-500 transition-colors p-1" title="Delete Sheet">
+                            <Trash2 className="w-5 h-5" />
+                          </button>
                         </div>
-                        <button 
-                          onClick={(e) => deleteRecord(sheet.id, e)}
-                          className="text-gray-300 hover:text-red-500 transition-colors p-1"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
+
                       </div>
                       <div>
-                        <h3 className="font-black text-gray-800 text-lg truncate group-hover:text-blue-700">{sheet.sheetName}</h3>
-                        <p className="text-xs font-semibold text-gray-400 mt-1 flex items-center gap-1">
-                          <Clock className="w-3 h-3" /> 
-                          {new Date(sheet.createdAt).toLocaleDateString()} at {new Date(sheet.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                        </p>
+                        <h3 className="font-black text-gray-800 text-lg truncate group-hover:text-blue-700" title={sheet.sheetName}>{sheet.sheetName}</h3>
+                        <p className="text-xs font-semibold text-gray-400 mt-1 flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(sheet.createdAt).toLocaleDateString()} at {new Date(sheet.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
                       </div>
                     </div>
                   ))}
@@ -404,10 +410,62 @@ export default function App() {
               )}
             </div>
           )}
+
+          {/* TAB 3: GLOBAL ANALYTICS */}
+          {dashboardTab === 'analytics' && (
+            <div className="max-w-4xl mx-auto space-y-6">
+              <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-200 text-center">
+                <h2 className="text-xl font-black text-gray-900 mb-4">Master Site Tracker</h2>
+                <div className="relative max-w-md mx-auto">
+                  <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input type="text" placeholder="Enter site code to scan entire database..." value={globalSearch} onChange={(e) => setGlobalSearch(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-gray-50 border border-gray-200 rounded-2xl text-base font-bold focus:outline-none focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-inner"/>
+                </div>
+              </div>
+              {globalSearch.trim() && analyticsData && (
+                <>
+                  {analyticsData.results.length === 0 ? (
+                    <div className="text-center py-12 text-gray-500 font-medium bg-white rounded-3xl border border-gray-100">No records found across database for site: "{globalSearch}"</div>
+                  ) : (
+                    <div className="space-y-6">
+                      <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+                        <div className="bg-gray-50 border-b border-gray-100 p-4 font-bold text-gray-600 text-sm uppercase tracking-wider">Occurrence Timeline for <span className="text-blue-600">"{globalSearch.toUpperCase()}"</span></div>
+                        <div className="divide-y divide-gray-50">
+                          {analyticsData.results.map((record, idx) => (
+                            <div key={idx} className="p-4 hover:bg-gray-50 transition-colors flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                              <div className="max-w-[200px]">
+                                <h4 className="font-black text-gray-800 text-lg truncate" title={record.sheetName}>{record.sheetName}</h4>
+                                <p className="text-xs font-semibold text-gray-400">{new Date(record.date).toLocaleDateString()}</p>
+                              </div>
+                              <div className="flex gap-4 flex-wrap">
+                                <div className="text-center"><p className="text-[10px] font-bold text-blue-500 uppercase">Mason</p><p className="font-black text-gray-900">{record.masonReg} <span className="text-xs text-gray-400 font-medium">({record.masonOT}h)</span></p></div>
+                                <div className="text-center"><p className="text-[10px] font-bold text-purple-500 uppercase">H. Mason</p><p className="font-black text-gray-900">{record.halfMasonReg} <span className="text-xs text-gray-400 font-medium">({record.halfMasonOT}h)</span></p></div>
+                                <div className="text-center"><p className="text-[10px] font-bold text-orange-500 uppercase">Helper</p><p className="font-black text-gray-900">{record.helperReg} <span className="text-xs text-gray-400 font-medium">({record.helperOT}h)</span></p></div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="bg-gray-900 p-8 rounded-3xl shadow-2xl border border-gray-800">
+                        <h3 className="text-white font-black text-center text-xl mb-6 tracking-wider flex items-center justify-center gap-2"><Database className="w-5 h-5 text-blue-400" /> GLOBAL DATABASE TOTALS</h3>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs">
+                          <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-xs tracking-wider">Mason Days</p><p className="text-3xl font-black text-white">{analyticsData.totals.masonReg}</p></div>
+                          <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-xs tracking-wider">Mason Extra</p><p className="text-3xl font-black text-white">{analyticsData.totals.masonOT} <span className="text-sm font-medium text-gray-500">hrs</span></p></div>
+                          <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-purple-400 font-bold mb-1 uppercase text-xs tracking-wider">HM Days</p><p className="text-3xl font-black text-purple-200">{analyticsData.totals.halfMasonReg}</p></div>
+                          <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-purple-400 font-bold mb-1 uppercase text-xs tracking-wider">HM Extra</p><p className="text-3xl font-black text-purple-200">{analyticsData.totals.halfMasonOT} <span className="text-sm font-medium text-gray-500">hrs</span></p></div>
+                          <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-xs tracking-wider">Helper Days</p><p className="text-3xl font-black text-white">{analyticsData.totals.helperReg}</p></div>
+                          <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-xs tracking-wider">Helper Extra</p><p className="text-3xl font-black text-white">{analyticsData.totals.helperOT} <span className="text-sm font-medium text-gray-500">hrs</span></p></div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       ) : (
 
-      /* --- DATA VIEW (AFTER UPLOAD OR LOAD) --- */
+      /* --- ACTIVE PARSED SHEET VIEW --- */
         <div className="max-w-7xl mx-auto space-y-6 p-4 md:p-8 pt-8">
           
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-center gap-4">
@@ -416,76 +474,39 @@ export default function App() {
                 <LayoutGrid className="w-6 h-6" />
               </div>
               <div>
-                <h1 className="text-2xl font-black tracking-tight text-gray-900 leading-none truncate max-w-xs">{sheetName}</h1>
+                <h1 className="text-2xl font-black tracking-tight text-gray-900 leading-none truncate max-w-xs" title={sheetName}>{sheetName}</h1>
                 <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mt-1">CRM_FIX Analysis Engine</p>
               </div>
             </div>
             
             <div className="flex w-full md:w-auto gap-3">
-              {/* THE NEW SAVE BUTTON */}
-              <button 
-                onClick={saveToDatabase}
-                disabled={hasSavedCurrent || isSaving}
-                className={`flex-1 md:flex-none justify-center px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all shadow-sm
-                  ${hasSavedCurrent 
-                    ? 'bg-gray-100 text-gray-500 cursor-not-allowed border border-gray-200' 
-                    : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}
-              >
+              <button onClick={saveToDatabase} disabled={hasSavedCurrent || isSaving} className={`flex-1 md:flex-none justify-center px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all shadow-sm ${hasSavedCurrent ? 'bg-gray-100 text-gray-500 cursor-not-allowed border border-gray-200' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
                 {hasSavedCurrent ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
                 {hasSavedCurrent ? "Saved to Cloud" : isSaving ? "Saving..." : "Save Insight"}
               </button>
-
-              <button 
-                onClick={() => { setSiteData([]); setDayData([]); fileInputRef.current?.click(); }}
-                className="flex-1 md:flex-none justify-center bg-gray-100 hover:bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 transition-all"
-              >
+              <button onClick={() => { setSiteData([]); setDayData([]); fileInputRef.current?.click(); }} className="flex-1 md:flex-none justify-center bg-gray-100 hover:bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 transition-all">
                 <Upload className="w-4 h-4" /> Upload
               </button>
             </div>
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            
             <div className="flex flex-col md:flex-row justify-between items-center border-b border-gray-100 bg-gray-50/50 p-3 gap-3">
-              
               <div className="flex w-full md:w-auto bg-gray-200/60 p-1 rounded-xl">
-                <button 
-                  className={`flex-1 md:flex-none px-6 py-2.5 font-bold text-sm rounded-lg transition-all ${activeTab === 'day' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                  onClick={() => setActiveTab('day')}
-                >
-                  Day-Wise View
-                </button>
-                <button 
-                  className={`flex-1 md:flex-none px-6 py-2.5 font-bold text-sm rounded-lg transition-all ${activeTab === 'site' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                  onClick={() => setActiveTab('site')}
-                >
-                  Site-Wise View
-                </button>
+                <button className={`flex-1 md:flex-none px-6 py-2.5 font-bold text-sm rounded-lg transition-all ${activeTab === 'day' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('day')}>Day-Wise View</button>
+                <button className={`flex-1 md:flex-none px-6 py-2.5 font-bold text-sm rounded-lg transition-all ${activeTab === 'site' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('site')}>Site-Wise View</button>
               </div>
-
               <div className="relative w-full md:w-72">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search site code..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm"
-                />
+                <input type="text" placeholder="Search site code..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm"/>
               </div>
-
               <div className="flex w-full md:w-auto gap-2">
-                <button onClick={exportToExcel} className="flex-1 md:flex-none justify-center text-sm font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors border border-emerald-200">
-                  <Download className="w-4 h-4" /> Excel
-                </button>
-                <button onClick={exportToPDF} className="flex-1 md:flex-none justify-center text-sm font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors border border-rose-200">
-                  <FileText className="w-4 h-4" /> PDF
-                </button>
+                <button onClick={exportToExcel} className="flex-1 md:flex-none justify-center text-sm font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors border border-emerald-200"><Download className="w-4 h-4" /> Excel</button>
+                <button onClick={exportToPDF} className="flex-1 md:flex-none justify-center text-sm font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors border border-rose-200"><FileText className="w-4 h-4" /> PDF</button>
               </div>
             </div>
 
             <div className="overflow-x-auto max-h-[650px] bg-gray-50 md:bg-white custom-scrollbar relative">
-              
               <table className="w-full text-sm text-left hidden md:table">
                 <thead className="bg-gray-50/90 uppercase text-[11px] font-black tracking-wider text-gray-500 sticky top-0 z-10 backdrop-blur-md shadow-sm">
                   <tr>
@@ -514,12 +535,9 @@ export default function App() {
                       </tr>
                     ))
                   ) : (
-                    <tr>
-                      <td colSpan="8" className="px-6 py-12 text-center text-gray-500 font-medium">No sites found</td>
-                    </tr>
+                    <tr><td colSpan="8" className="px-6 py-12 text-center text-gray-500 font-medium">No sites found</td></tr>
                   )}
                 </tbody>
-                
                 {filteredData.length > 0 && (
                   <tfoot className="bg-gray-100/90 sticky bottom-0 z-10 backdrop-blur-md shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] border-t-2 border-gray-200">
                     <tr>
@@ -534,43 +552,6 @@ export default function App() {
                   </tfoot>
                 )}
               </table>
-
-              <div className="block md:hidden p-4 space-y-4">
-                {filteredData.length > 0 ? (
-                  filteredData.map((row, idx) => (
-                    <div key={idx} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-                      <div className="flex justify-between items-center border-b border-gray-50 pb-3">
-                        <span className="text-sm font-black text-gray-800 bg-gray-100 px-3 py-1.5 rounded-lg">Site: {row.site}</span>
-                        {activeTab === 'day' && <span className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg">Day {row.day}</span>}
-                      </div>
-                      <div className="grid grid-cols-2 gap-3 text-xs">
-                        <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100"><p className="text-blue-600/80 font-bold mb-1 uppercase tracking-wider text-[10px]">Mason Days</p><p className="text-lg font-black text-blue-900">{row.masonReg}</p></div>
-                        <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100"><p className="text-blue-600/80 font-bold mb-1 uppercase tracking-wider text-[10px]">Mason Extra</p><p className="text-lg font-black text-blue-900">{row.masonOT} <span className="text-xs font-medium text-blue-400">hrs</span></p></div>
-                        <div className="bg-purple-50/50 p-3 rounded-xl border border-purple-100"><p className="text-purple-600/80 font-bold mb-1 uppercase tracking-wider text-[10px]">HM Days</p><p className="text-lg font-black text-purple-900">{row.halfMasonReg}</p></div>
-                        <div className="bg-purple-50/50 p-3 rounded-xl border border-purple-100"><p className="text-purple-600/80 font-bold mb-1 uppercase tracking-wider text-[10px]">HM Extra</p><p className="text-lg font-black text-purple-900">{row.halfMasonOT} <span className="text-xs font-medium text-purple-400">hrs</span></p></div>
-                        <div className="bg-orange-50/50 p-3 rounded-xl border border-orange-100"><p className="text-orange-600/80 font-bold mb-1 uppercase tracking-wider text-[10px]">Helper Days</p><p className="text-lg font-black text-orange-900">{row.helperReg}</p></div>
-                        <div className="bg-orange-50/50 p-3 rounded-xl border border-orange-100"><p className="text-orange-600/80 font-bold mb-1 uppercase tracking-wider text-[10px]">Helper Extra</p><p className="text-lg font-black text-orange-900">{row.helperOT} <span className="text-xs font-medium text-orange-400">hrs</span></p></div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-12 text-gray-500 font-medium bg-white rounded-2xl border border-gray-100">No sites found</div>
-                )}
-
-                {filteredData.length > 0 && (
-                  <div className="bg-gray-900 p-6 rounded-2xl shadow-xl mt-6 border border-gray-800">
-                    <h3 className="text-white font-black text-center text-lg mb-4 tracking-wider">GRAND TOTAL</h3>
-                    <div className="grid grid-cols-2 gap-3 text-xs">
-                      <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-1 uppercase text-[10px]">Total Mason Days</p><p className="text-xl font-black text-white">{totals.masonReg}</p></div>
-                      <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-1 uppercase text-[10px]">Total Mason Extra</p><p className="text-xl font-black text-white">{totals.masonOT} <span className="text-xs font-medium text-gray-500">hrs</span></p></div>
-                      <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-purple-400 font-bold mb-1 uppercase text-[10px]">Total HM Days</p><p className="text-xl font-black text-purple-200">{totals.halfMasonReg}</p></div>
-                      <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-purple-400 font-bold mb-1 uppercase text-[10px]">Total HM Extra</p><p className="text-xl font-black text-purple-200">{totals.halfMasonOT} <span className="text-xs font-medium text-gray-500">hrs</span></p></div>
-                      <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-1 uppercase text-[10px]">Total Helper Days</p><p className="text-xl font-black text-white">{totals.helperReg}</p></div>
-                      <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-1 uppercase text-[10px]">Total Helper Extra</p><p className="text-xl font-black text-white">{totals.helperOT} <span className="text-xs font-medium text-gray-500">hrs</span></p></div>
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         </div>
