@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 // ⚠️ REPLACE THIS BLOCK WITH YOUR ACTUAL KEYS FROM FIREBASE
 const firebaseConfig = {
@@ -16,3 +17,4 @@ const app = initializeApp(firebaseConfig);
 
 // Initialize Cloud Firestore and export it so our app can use it
 export const db = getFirestore(app);
+export const auth = getAuth(app);

@@ -2,13 +2,21 @@ import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
-import { Upload, Download, FileText, UploadCloud, LayoutGrid, Search, Save, Trash2, Database, Clock, Check, BarChart3, Edit2 } from 'lucide-react';
+import { Upload, Download, FileText, UploadCloud, LayoutGrid, Search, Save, Trash2, Database, Clock, Check, BarChart3, Edit2, LogOut, Lock } from 'lucide-react';
 
-// FIREBASE IMPORTS (Added updateDoc for renaming)
+// FIREBASE IMPORTS
 import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc } from "firebase/firestore";
-import { db } from './firebase'; 
+import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
+import { db, auth } from './firebase'; 
 
 export default function App() {
+  // --- AUTHENTICATION STATE ---
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+
   const [siteData, setSiteData] = useState([]);
   const [dayData, setDayData] = useState([]);
   const [activeTab, setActiveTab] = useState('day');
@@ -16,17 +24,42 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const fileInputRef = useRef(null);
 
-  // Dashboard States
   const [dashboardTab, setDashboardTab] = useState('upload'); 
   const [savedSheets, setSavedSheets] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
   const [hasSavedCurrent, setHasSavedCurrent] = useState(false);
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
   
-  // Analytics State
   const [globalSearch, setGlobalSearch] = useState("");
 
+  // --- AUTHENTICATION LISTENER ---
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoginError("");
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (err) {
+      setLoginError("Invalid email or password. Please try again.");
+    }
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    setSiteData([]);
+    setDayData([]);
+    setDashboardTab('upload');
+  };
+
   const fetchSavedSheets = async () => {
+    if (!user) return; // Only fetch if logged in
     setIsLoadingRecords(true);
     try {
       const querySnapshot = await getDocs(collection(db, "attendance_sheets"));
@@ -43,23 +76,22 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchSavedSheets();
-  }, []);
+    if (user) fetchSavedSheets();
+  }, [user]);
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // USE THE ACTUAL FILE NAME (stripping the .xlsx/.csv extension for a clean look)
     const cleanFileName = file.name.replace(/\.[^/.]+$/, "");
-
     const reader = new FileReader();
+    
     reader.onload = (evt) => {
       const bstr = evt.target.result;
       const wb = XLSX.read(bstr, { type: 'binary' });
       let rawData = [];
 
-      setSheetName(cleanFileName); // Using the actual file name here!
+      setSheetName(cleanFileName); 
       const currentSheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(currentSheet, { header: 1, defval: "" });
 
@@ -176,7 +208,8 @@ export default function App() {
         sheetName: sheetName,
         siteData: siteData,
         dayData: dayData,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        ownerId: user.uid // Attach user ID for security
       });
       
       setHasSavedCurrent(true);
@@ -188,28 +221,14 @@ export default function App() {
     setIsSaving(false);
   };
 
-  // --- NEW RENAME FUNCTION ---
   const renameRecord = async (id, currentName, e) => {
-    e.stopPropagation(); // Stop the card from opening
+    e.stopPropagation(); 
     const newName = window.prompt("Enter a new name for this sheet:", currentName);
-    
     if (!newName || newName.trim() === "" || newName === currentName) return;
-
     try {
-      // 1. Update Firebase
-      await updateDoc(doc(db, "attendance_sheets", id), {
-        sheetName: newName.trim()
-      });
-      
-      // 2. Update Dashboard UI instantly
-      setSavedSheets(savedSheets.map(sheet => 
-        sheet.id === id ? { ...sheet, sheetName: newName.trim() } : sheet
-      ));
-      
-      // 3. Update the top header if you happen to be viewing this exact sheet right now
-      if (hasSavedCurrent && sheetName === currentName) {
-        setSheetName(newName.trim());
-      }
+      await updateDoc(doc(db, "attendance_sheets", id), { sheetName: newName.trim() });
+      setSavedSheets(savedSheets.map(sheet => sheet.id === id ? { ...sheet, sheetName: newName.trim() } : sheet));
+      if (hasSavedCurrent && sheetName === currentName) setSheetName(newName.trim());
     } catch (error) {
       console.error("Error renaming document: ", error);
       alert("Failed to rename the record.");
@@ -242,18 +261,13 @@ export default function App() {
   const getGlobalAnalytics = () => {
     if (!globalSearch.trim()) return null;
     const targetSite = globalSearch.toLowerCase().trim();
-    
     let results = [];
     let totals = { masonReg: 0, masonOT: 0, halfMasonReg: 0, halfMasonOT: 0, helperReg: 0, helperOT: 0 };
 
     savedSheets.forEach(sheet => {
       const siteMatch = sheet.siteData.find(s => s.site.toLowerCase() === targetSite);
       if (siteMatch) {
-        results.push({
-          sheetName: sheet.sheetName,
-          date: sheet.createdAt,
-          ...siteMatch
-        });
+        results.push({ sheetName: sheet.sheetName, date: sheet.createdAt, ...siteMatch });
         totals.masonReg += siteMatch.masonReg || 0;
         totals.masonOT += siteMatch.masonOT || 0;
         totals.halfMasonReg += siteMatch.halfMasonReg || 0;
@@ -262,12 +276,10 @@ export default function App() {
         totals.helperOT += siteMatch.helperOT || 0;
       }
     });
-    
     return { results, totals };
   };
 
   const analyticsData = getGlobalAnalytics();
-
   const activeData = activeTab === 'site' ? siteData : dayData;
   const filteredData = activeData.filter(row => row.site.toLowerCase().includes(searchQuery.toLowerCase()));
   const totals = filteredData.reduce((acc, row) => {
@@ -295,7 +307,6 @@ export default function App() {
         "Helper Extra Hours": row.helperOT
       };
     });
-
     const totalRow = { "Site Code": "GRAND TOTAL" };
     if (activeTab === 'day') totalRow["Date (Day)"] = "";
     totalRow["Mason Days"] = totals.masonReg;
@@ -325,13 +336,11 @@ export default function App() {
     const tableColumn = activeTab === 'day' 
       ? ["Day", "Site", "Mason D", "Mason Ex", "HM Days", "HM Ex", "Helper D", "Helper Ex"]
       : ["Site Code", "Mason Days", "Mason Extra", "HM Days", "HM Extra", "Helper Days", "Helper Extra"];
-
     const tableRows = filteredData.map(row => 
       activeTab === 'day'
         ? [row.day, row.site, row.masonReg, row.masonOT, row.halfMasonReg, row.halfMasonOT, row.helperReg, row.helperOT]
         : [row.site, row.masonReg, row.masonOT, row.halfMasonReg, row.halfMasonOT, row.helperReg, row.helperOT]
     );
-
     const footRow = activeTab === 'day'
       ? ["", "TOTAL", totals.masonReg, totals.masonOT, totals.halfMasonReg, totals.halfMasonOT, totals.helperReg, totals.helperOT]
       : ["TOTAL", totals.masonReg, totals.masonOT, totals.halfMasonReg, totals.halfMasonOT, totals.helperReg, totals.helperOT];
@@ -340,69 +349,128 @@ export default function App() {
     doc.save(`CRM_FIX_${sheetName}_${activeTab === 'day' ? 'DayWise' : 'SiteWise'}.pdf`);
   };
 
+  // --- RENDER LOGIC ---
+  if (authLoading) {
+    return <div className="min-h-screen flex items-center justify-center bg-[#f8fafc] text-gray-500 font-bold">Initializing Secure Environment...</div>;
+  }
+
+  // --- LOGIN SCREEN ---
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f8fafc] px-4 font-sans selection:bg-blue-100 selection:text-blue-900">
+        <div className="w-full max-w-md bg-white p-8 md:p-10 rounded-3xl shadow-xl border border-gray-100">
+          <div className="flex flex-col items-center mb-8 text-center">
+            <div className="bg-blue-600 p-4 rounded-2xl shadow-lg shadow-blue-600/20 mb-5">
+              <Lock className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-3xl font-black text-gray-900 tracking-tight">CRM_FIX</h1>
+            <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mt-1">Authorized Access Only</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-5">
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Email Address</label>
+              <input 
+                type="email" 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="w-full px-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                placeholder="Enter your email"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Password</label>
+              <input 
+                type="password" 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                className="w-full px-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                placeholder="Enter your password"
+              />
+            </div>
+            
+            {loginError && <p className="text-red-500 text-xs font-bold text-center bg-red-50 py-2 rounded-lg">{loginError}</p>}
+            
+            <button type="submit" className="w-full py-4 bg-gray-900 hover:bg-blue-600 text-white font-bold rounded-xl shadow-md transition-colors duration-300">
+              Access Dashboard
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // --- MAIN DASHBOARD (LOGGED IN) ---
   return (
     <div className="min-h-screen bg-[#f8fafc] text-gray-800 font-sans selection:bg-blue-100 selection:text-blue-900">
+      
+      {/* GLOBAL HEADER WITH LOGOUT */}
+      <header className="bg-white border-b border-gray-200 px-4 py-3 flex justify-between items-center shadow-sm">
+        <div className="flex items-center gap-2">
+          <div className="bg-blue-600 p-1.5 rounded-lg"><LayoutGrid className="w-4 h-4 text-white" /></div>
+          <span className="font-black text-gray-900 text-sm tracking-tight">CRM_FIX</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <span className="text-xs font-bold text-gray-500 hidden md:inline-block">{user.email}</span>
+          <button onClick={handleLogout} className="text-xs font-bold bg-gray-100 hover:bg-red-50 hover:text-red-600 text-gray-600 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-colors">
+            <LogOut className="w-3.5 h-3.5" /> Sign Out
+          </button>
+        </div>
+      </header>
+
       <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
       
       {/* --- DASHBOARD / EMPTY STATE --- */}
       {activeData.length === 0 ? (
-        <div className="max-w-6xl mx-auto pt-16 px-4">
+        <div className="max-w-6xl mx-auto pt-10 md:pt-16 px-4 pb-12">
           
           <div className="text-center mb-10 space-y-3">
-            <div className="inline-flex items-center justify-center p-3 bg-blue-600 rounded-2xl shadow-lg shadow-blue-600/20 mb-4">
-              <LayoutGrid className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-4xl md:text-5xl font-black tracking-tight text-gray-900">CRM_FIX</h1>
-            <p className="text-lg font-medium text-gray-500 uppercase tracking-widest">Attendance & Analytics Engine</p>
+            <h1 className="text-3xl md:text-5xl font-black tracking-tight text-gray-900">Welcome Back.</h1>
+            <p className="text-sm md:text-lg font-medium text-gray-500 uppercase tracking-widest">Attendance & Analytics Engine</p>
           </div>
 
           <div className="flex justify-center mb-8">
-            <div className="bg-gray-200/60 p-1.5 rounded-2xl inline-flex shadow-inner overflow-x-auto max-w-full">
-              <button onClick={() => setDashboardTab('upload')} className={`whitespace-nowrap px-6 py-3 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${dashboardTab === 'upload' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}><UploadCloud className="w-4 h-4" /> Upload New</button>
-              <button onClick={() => { setDashboardTab('records'); fetchSavedSheets(); }} className={`whitespace-nowrap px-6 py-3 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${dashboardTab === 'records' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}><Database className="w-4 h-4" /> Saved Records</button>
-              <button onClick={() => { setDashboardTab('analytics'); fetchSavedSheets(); }} className={`whitespace-nowrap px-6 py-3 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${dashboardTab === 'analytics' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}><BarChart3 className="w-4 h-4" /> Global Analytics</button>
+            <div className="bg-gray-200/60 p-1.5 rounded-2xl inline-flex shadow-inner overflow-x-auto max-w-full custom-scrollbar">
+              <button onClick={() => setDashboardTab('upload')} className={`whitespace-nowrap px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-bold text-xs md:text-sm transition-all flex items-center gap-2 ${dashboardTab === 'upload' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}><UploadCloud className="w-4 h-4" /> Upload New</button>
+              <button onClick={() => { setDashboardTab('records'); fetchSavedSheets(); }} className={`whitespace-nowrap px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-bold text-xs md:text-sm transition-all flex items-center gap-2 ${dashboardTab === 'records' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}><Database className="w-4 h-4" /> Saved Records</button>
+              <button onClick={() => { setDashboardTab('analytics'); fetchSavedSheets(); }} className={`whitespace-nowrap px-4 md:px-6 py-2.5 md:py-3 rounded-xl font-bold text-xs md:text-sm transition-all flex items-center gap-2 ${dashboardTab === 'analytics' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}><BarChart3 className="w-4 h-4" /> Global Analytics</button>
             </div>
           </div>
 
           {/* TAB 1: UPLOAD ZONE */}
           {dashboardTab === 'upload' && (
-            <div onClick={() => fileInputRef.current?.click()} className="group w-full max-w-2xl mx-auto cursor-pointer bg-white rounded-3xl border-2 border-dashed border-gray-300 hover:border-blue-500 hover:bg-blue-50/50 transition-all duration-300 p-12 md:p-20 shadow-sm hover:shadow-xl text-center">
+            <div onClick={() => fileInputRef.current?.click()} className="group w-full max-w-2xl mx-auto cursor-pointer bg-white rounded-3xl border-2 border-dashed border-gray-300 hover:border-blue-500 hover:bg-blue-50/50 transition-all duration-300 p-8 md:p-20 shadow-sm hover:shadow-xl text-center">
               <div className="flex flex-col items-center justify-center space-y-6">
                 <div className="bg-blue-100/50 text-blue-600 p-6 rounded-full group-hover:scale-110 group-hover:bg-blue-100 transition-all duration-300"><UploadCloud className="w-12 h-12" /></div>
-                <div><p className="text-2xl font-bold text-gray-800">Upload Attendance Sheet</p><p className="text-gray-500 mt-2">Parse and visualize your site data instantly.</p></div>
+                <div><p className="text-xl md:text-2xl font-bold text-gray-800">Upload Attendance Sheet</p><p className="text-sm md:text-base text-gray-500 mt-2">Parse and visualize your site data instantly.</p></div>
                 <span className="mt-4 px-8 py-3 bg-gray-900 text-white font-semibold rounded-xl shadow-md group-hover:bg-blue-600 transition-colors duration-300 flex items-center gap-2"><Upload className="w-4 h-4" />Select File</span>
               </div>
             </div>
           )}
 
-          {/* TAB 2: SAVED RECORDS (WITH RENAME BUTTON) */}
+          {/* TAB 2: SAVED RECORDS */}
           {dashboardTab === 'records' && (
-            <div className="bg-white rounded-3xl p-8 shadow-sm border border-gray-200 min-h-[400px]">
+            <div className="bg-white rounded-3xl p-4 md:p-8 shadow-sm border border-gray-200 min-h-[400px]">
               {isLoadingRecords ? (
                 <div className="flex justify-center items-center h-48 text-gray-400 font-bold">Loading cloud records...</div>
               ) : savedSheets.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-48 text-gray-400 space-y-4"><Database className="w-12 h-12 text-gray-200" /><p className="font-semibold">No saved sheets found.</p></div>
+                <div className="flex flex-col items-center justify-center h-48 text-gray-400 space-y-4"><Database className="w-12 h-12 text-gray-200" /><p className="font-semibold text-center">No saved sheets found.<br/><span className="text-sm font-normal">Upload and save a sheet to see it here.</span></p></div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {savedSheets.map((sheet) => (
-                    <div key={sheet.id} onClick={() => loadSavedRecord(sheet)} className="group bg-gray-50 hover:bg-blue-50 border border-gray-100 hover:border-blue-200 rounded-2xl p-5 cursor-pointer transition-all flex flex-col justify-between space-y-4">
+                    <div key={sheet.id} onClick={() => loadSavedRecord(sheet)} className="group bg-gray-50 hover:bg-blue-50 border border-gray-100 hover:border-blue-200 rounded-2xl p-5 cursor-pointer transition-all flex flex-col justify-between space-y-4 shadow-sm">
                       <div className="flex items-start justify-between">
                         <div className="bg-blue-100 text-blue-600 p-2.5 rounded-lg"><FileText className="w-5 h-5" /></div>
-                        
-                        {/* EDIT AND DELETE BUTTONS */}
-                        <div className="flex gap-2">
-                          <button onClick={(e) => renameRecord(sheet.id, sheet.sheetName, e)} className="text-gray-400 hover:text-blue-500 transition-colors p-1" title="Rename Sheet">
-                            <Edit2 className="w-5 h-5" />
-                          </button>
-                          <button onClick={(e) => deleteRecord(sheet.id, e)} className="text-gray-400 hover:text-red-500 transition-colors p-1" title="Delete Sheet">
-                            <Trash2 className="w-5 h-5" />
-                          </button>
+                        <div className="flex gap-1">
+                          <button onClick={(e) => renameRecord(sheet.id, sheet.sheetName, e)} className="text-gray-400 hover:text-blue-500 bg-white shadow-sm rounded-lg p-1.5 transition-colors" title="Rename"><Edit2 className="w-4 h-4" /></button>
+                          <button onClick={(e) => deleteRecord(sheet.id, e)} className="text-gray-400 hover:text-red-500 bg-white shadow-sm rounded-lg p-1.5 transition-colors" title="Delete"><Trash2 className="w-4 h-4" /></button>
                         </div>
-
                       </div>
                       <div>
-                        <h3 className="font-black text-gray-800 text-lg truncate group-hover:text-blue-700" title={sheet.sheetName}>{sheet.sheetName}</h3>
-                        <p className="text-xs font-semibold text-gray-400 mt-1 flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(sheet.createdAt).toLocaleDateString()} at {new Date(sheet.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                        <h3 className="font-black text-gray-800 text-base md:text-lg truncate group-hover:text-blue-700" title={sheet.sheetName}>{sheet.sheetName}</h3>
+                        <p className="text-[11px] md:text-xs font-semibold text-gray-400 mt-1 flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(sheet.createdAt).toLocaleDateString()} at {new Date(sheet.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
                       </div>
                     </div>
                   ))}
@@ -415,45 +483,45 @@ export default function App() {
           {dashboardTab === 'analytics' && (
             <div className="max-w-4xl mx-auto space-y-6">
               <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-200 text-center">
-                <h2 className="text-xl font-black text-gray-900 mb-4">Master Site Tracker</h2>
-                <div className="relative max-w-md mx-auto">
+                <h2 className="text-lg md:text-xl font-black text-gray-900 mb-4">Master Site Tracker</h2>
+                <div className="relative w-full md:max-w-md mx-auto">
                   <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input type="text" placeholder="Enter site code to scan entire database..." value={globalSearch} onChange={(e) => setGlobalSearch(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-gray-50 border border-gray-200 rounded-2xl text-base font-bold focus:outline-none focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-inner"/>
+                  <input type="text" placeholder="Enter site code..." value={globalSearch} onChange={(e) => setGlobalSearch(e.target.value)} className="w-full pl-12 pr-4 py-3.5 md:py-4 bg-gray-50 border border-gray-200 rounded-2xl text-sm md:text-base font-bold focus:outline-none focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-inner"/>
                 </div>
               </div>
               {globalSearch.trim() && analyticsData && (
                 <>
                   {analyticsData.results.length === 0 ? (
-                    <div className="text-center py-12 text-gray-500 font-medium bg-white rounded-3xl border border-gray-100">No records found across database for site: "{globalSearch}"</div>
+                    <div className="text-center py-12 text-gray-500 font-medium bg-white rounded-3xl border border-gray-100">No records found for site: "{globalSearch}"</div>
                   ) : (
                     <div className="space-y-6">
                       <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-                        <div className="bg-gray-50 border-b border-gray-100 p-4 font-bold text-gray-600 text-sm uppercase tracking-wider">Occurrence Timeline for <span className="text-blue-600">"{globalSearch.toUpperCase()}"</span></div>
+                        <div className="bg-gray-50 border-b border-gray-100 p-4 font-bold text-gray-600 text-xs md:text-sm uppercase tracking-wider truncate">Occurrence Timeline: <span className="text-blue-600">"{globalSearch.toUpperCase()}"</span></div>
                         <div className="divide-y divide-gray-50">
                           {analyticsData.results.map((record, idx) => (
                             <div key={idx} className="p-4 hover:bg-gray-50 transition-colors flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                              <div className="max-w-[200px]">
-                                <h4 className="font-black text-gray-800 text-lg truncate" title={record.sheetName}>{record.sheetName}</h4>
+                              <div className="max-w-full md:max-w-[200px]">
+                                <h4 className="font-black text-gray-800 text-base md:text-lg truncate" title={record.sheetName}>{record.sheetName}</h4>
                                 <p className="text-xs font-semibold text-gray-400">{new Date(record.date).toLocaleDateString()}</p>
                               </div>
-                              <div className="flex gap-4 flex-wrap">
-                                <div className="text-center"><p className="text-[10px] font-bold text-blue-500 uppercase">Mason</p><p className="font-black text-gray-900">{record.masonReg} <span className="text-xs text-gray-400 font-medium">({record.masonOT}h)</span></p></div>
-                                <div className="text-center"><p className="text-[10px] font-bold text-purple-500 uppercase">H. Mason</p><p className="font-black text-gray-900">{record.halfMasonReg} <span className="text-xs text-gray-400 font-medium">({record.halfMasonOT}h)</span></p></div>
-                                <div className="text-center"><p className="text-[10px] font-bold text-orange-500 uppercase">Helper</p><p className="font-black text-gray-900">{record.helperReg} <span className="text-xs text-gray-400 font-medium">({record.helperOT}h)</span></p></div>
+                              <div className="flex gap-2 md:gap-4 flex-wrap w-full md:w-auto justify-between md:justify-end">
+                                <div className="text-center bg-white p-2 rounded-lg border border-gray-100 flex-1 md:flex-none min-w-[70px]"><p className="text-[9px] md:text-[10px] font-bold text-blue-500 uppercase">Mason</p><p className="font-black text-gray-900 text-sm">{record.masonReg} <span className="text-[10px] text-gray-400 font-medium">({record.masonOT}h)</span></p></div>
+                                <div className="text-center bg-white p-2 rounded-lg border border-gray-100 flex-1 md:flex-none min-w-[70px]"><p className="text-[9px] md:text-[10px] font-bold text-purple-500 uppercase">H. Mason</p><p className="font-black text-gray-900 text-sm">{record.halfMasonReg} <span className="text-[10px] text-gray-400 font-medium">({record.halfMasonOT}h)</span></p></div>
+                                <div className="text-center bg-white p-2 rounded-lg border border-gray-100 flex-1 md:flex-none min-w-[70px]"><p className="text-[9px] md:text-[10px] font-bold text-orange-500 uppercase">Helper</p><p className="font-black text-gray-900 text-sm">{record.helperReg} <span className="text-[10px] text-gray-400 font-medium">({record.helperOT}h)</span></p></div>
                               </div>
                             </div>
                           ))}
                         </div>
                       </div>
-                      <div className="bg-gray-900 p-8 rounded-3xl shadow-2xl border border-gray-800">
-                        <h3 className="text-white font-black text-center text-xl mb-6 tracking-wider flex items-center justify-center gap-2"><Database className="w-5 h-5 text-blue-400" /> GLOBAL DATABASE TOTALS</h3>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs">
-                          <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-xs tracking-wider">Mason Days</p><p className="text-3xl font-black text-white">{analyticsData.totals.masonReg}</p></div>
-                          <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-xs tracking-wider">Mason Extra</p><p className="text-3xl font-black text-white">{analyticsData.totals.masonOT} <span className="text-sm font-medium text-gray-500">hrs</span></p></div>
-                          <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-purple-400 font-bold mb-1 uppercase text-xs tracking-wider">HM Days</p><p className="text-3xl font-black text-purple-200">{analyticsData.totals.halfMasonReg}</p></div>
-                          <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-purple-400 font-bold mb-1 uppercase text-xs tracking-wider">HM Extra</p><p className="text-3xl font-black text-purple-200">{analyticsData.totals.halfMasonOT} <span className="text-sm font-medium text-gray-500">hrs</span></p></div>
-                          <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-xs tracking-wider">Helper Days</p><p className="text-3xl font-black text-white">{analyticsData.totals.helperReg}</p></div>
-                          <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-xs tracking-wider">Helper Extra</p><p className="text-3xl font-black text-white">{analyticsData.totals.helperOT} <span className="text-sm font-medium text-gray-500">hrs</span></p></div>
+                      <div className="bg-gray-900 p-6 md:p-8 rounded-3xl shadow-2xl border border-gray-800">
+                        <h3 className="text-white font-black text-center text-lg md:text-xl mb-6 tracking-wider flex items-center justify-center gap-2"><Database className="w-5 h-5 text-blue-400" /> GLOBAL TOTALS</h3>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4 text-xs">
+                          <div className="bg-gray-800/80 p-3 md:p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-[10px] md:text-xs tracking-wider">Mason Days</p><p className="text-2xl md:text-3xl font-black text-white">{analyticsData.totals.masonReg}</p></div>
+                          <div className="bg-gray-800/80 p-3 md:p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-[10px] md:text-xs tracking-wider">Mason Extra</p><p className="text-2xl md:text-3xl font-black text-white">{analyticsData.totals.masonOT} <span className="text-xs md:text-sm font-medium text-gray-500">hrs</span></p></div>
+                          <div className="bg-gray-800/80 p-3 md:p-4 rounded-2xl"><p className="text-purple-400 font-bold mb-1 uppercase text-[10px] md:text-xs tracking-wider">HM Days</p><p className="text-2xl md:text-3xl font-black text-purple-200">{analyticsData.totals.halfMasonReg}</p></div>
+                          <div className="bg-gray-800/80 p-3 md:p-4 rounded-2xl"><p className="text-purple-400 font-bold mb-1 uppercase text-[10px] md:text-xs tracking-wider">HM Extra</p><p className="text-2xl md:text-3xl font-black text-purple-200">{analyticsData.totals.halfMasonOT} <span className="text-xs md:text-sm font-medium text-gray-500">hrs</span></p></div>
+                          <div className="bg-gray-800/80 p-3 md:p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-[10px] md:text-xs tracking-wider">Helper Days</p><p className="text-2xl md:text-3xl font-black text-white">{analyticsData.totals.helperReg}</p></div>
+                          <div className="bg-gray-800/80 p-3 md:p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-[10px] md:text-xs tracking-wider">Helper Extra</p><p className="text-2xl md:text-3xl font-black text-white">{analyticsData.totals.helperOT} <span className="text-xs md:text-sm font-medium text-gray-500">hrs</span></p></div>
                         </div>
                       </div>
                     </div>
@@ -466,72 +534,72 @@ export default function App() {
       ) : (
 
       /* --- ACTIVE PARSED SHEET VIEW --- */
-        <div className="max-w-7xl mx-auto space-y-6 p-4 md:p-8 pt-8">
+        <div className="max-w-7xl mx-auto space-y-4 md:space-y-6 p-2 md:p-8 pt-4 md:pt-8 pb-12">
           
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-center gap-4">
-            <div className="flex items-center gap-4">
-              <div className="bg-blue-600 p-2.5 rounded-xl text-white shadow-sm cursor-pointer" onClick={() => { setSiteData([]); setDayData([]); }}>
-                <LayoutGrid className="w-6 h-6" />
+          <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div className="flex items-center gap-3 md:gap-4 w-full md:w-auto">
+              <div className="bg-blue-600 p-2 md:p-2.5 rounded-xl text-white shadow-sm cursor-pointer shrink-0" onClick={() => { setSiteData([]); setDayData([]); }}>
+                <LayoutGrid className="w-5 h-5 md:w-6 md:h-6" />
               </div>
-              <div>
-                <h1 className="text-2xl font-black tracking-tight text-gray-900 leading-none truncate max-w-xs" title={sheetName}>{sheetName}</h1>
-                <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mt-1">CRM_FIX Analysis Engine</p>
+              <div className="min-w-0 flex-1">
+                <h1 className="text-xl md:text-2xl font-black tracking-tight text-gray-900 leading-none truncate" title={sheetName}>{sheetName}</h1>
+                <p className="text-[10px] md:text-xs font-bold uppercase tracking-wider text-gray-400 mt-1">CRM_FIX Analysis Engine</p>
               </div>
             </div>
             
-            <div className="flex w-full md:w-auto gap-3">
-              <button onClick={saveToDatabase} disabled={hasSavedCurrent || isSaving} className={`flex-1 md:flex-none justify-center px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all shadow-sm ${hasSavedCurrent ? 'bg-gray-100 text-gray-500 cursor-not-allowed border border-gray-200' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
+            <div className="flex w-full md:w-auto gap-2 md:gap-3">
+              <button onClick={saveToDatabase} disabled={hasSavedCurrent || isSaving} className={`flex-1 justify-center px-4 md:px-6 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition-all shadow-sm ${hasSavedCurrent ? 'bg-gray-100 text-gray-500 cursor-not-allowed border border-gray-200' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
                 {hasSavedCurrent ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-                {hasSavedCurrent ? "Saved to Cloud" : isSaving ? "Saving..." : "Save Insight"}
+                {hasSavedCurrent ? "Saved" : isSaving ? "Saving..." : "Save"}
               </button>
-              <button onClick={() => { setSiteData([]); setDayData([]); fileInputRef.current?.click(); }} className="flex-1 md:flex-none justify-center bg-gray-100 hover:bg-gray-200 text-gray-700 px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 transition-all">
+              <button onClick={() => { setSiteData([]); setDayData([]); fileInputRef.current?.click(); }} className="flex-1 justify-center bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 md:px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2 transition-all">
                 <Upload className="w-4 h-4" /> Upload
               </button>
             </div>
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="flex flex-col md:flex-row justify-between items-center border-b border-gray-100 bg-gray-50/50 p-3 gap-3">
-              <div className="flex w-full md:w-auto bg-gray-200/60 p-1 rounded-xl">
-                <button className={`flex-1 md:flex-none px-6 py-2.5 font-bold text-sm rounded-lg transition-all ${activeTab === 'day' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('day')}>Day-Wise View</button>
-                <button className={`flex-1 md:flex-none px-6 py-2.5 font-bold text-sm rounded-lg transition-all ${activeTab === 'site' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('site')}>Site-Wise View</button>
+            <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center border-b border-gray-100 bg-gray-50/50 p-2 md:p-3 gap-2 md:gap-3">
+              <div className="flex w-full lg:w-auto bg-gray-200/60 p-1 rounded-xl">
+                <button className={`flex-1 px-4 md:px-6 py-2 md:py-2.5 font-bold text-xs md:text-sm rounded-lg transition-all ${activeTab === 'day' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('day')}>Day-Wise</button>
+                <button className={`flex-1 px-4 md:px-6 py-2 md:py-2.5 font-bold text-xs md:text-sm rounded-lg transition-all ${activeTab === 'site' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('site')}>Site-Wise</button>
               </div>
-              <div className="relative w-full md:w-72">
+              <div className="relative w-full lg:flex-1 lg:max-w-xs">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input type="text" placeholder="Search site code..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm"/>
+                <input type="text" placeholder="Search site code..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-4 py-2 md:py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm"/>
               </div>
-              <div className="flex w-full md:w-auto gap-2">
-                <button onClick={exportToExcel} className="flex-1 md:flex-none justify-center text-sm font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors border border-emerald-200"><Download className="w-4 h-4" /> Excel</button>
-                <button onClick={exportToPDF} className="flex-1 md:flex-none justify-center text-sm font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors border border-rose-200"><FileText className="w-4 h-4" /> PDF</button>
+              <div className="flex w-full lg:w-auto gap-2">
+                <button onClick={exportToExcel} className="flex-1 lg:flex-none justify-center text-xs md:text-sm font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 px-3 md:px-4 py-2 md:py-2.5 rounded-xl flex items-center gap-1 md:gap-2 transition-colors border border-emerald-200"><Download className="w-3 h-3 md:w-4 md:h-4" /> Excel</button>
+                <button onClick={exportToPDF} className="flex-1 lg:flex-none justify-center text-xs md:text-sm font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 px-3 md:px-4 py-2 md:py-2.5 rounded-xl flex items-center gap-1 md:gap-2 transition-colors border border-rose-200"><FileText className="w-3 h-3 md:w-4 md:h-4" /> PDF</button>
               </div>
             </div>
 
-            <div className="overflow-x-auto max-h-[650px] bg-gray-50 md:bg-white custom-scrollbar relative">
+            <div className="overflow-x-auto max-h-[70vh] bg-gray-50 md:bg-white custom-scrollbar relative">
               <table className="w-full text-sm text-left hidden md:table">
                 <thead className="bg-gray-50/90 uppercase text-[11px] font-black tracking-wider text-gray-500 sticky top-0 z-10 backdrop-blur-md shadow-sm">
                   <tr>
-                    {activeTab === 'day' && <th className="px-6 py-4 border-b border-r border-gray-100">Day</th>}
-                    <th className="px-6 py-4 border-b border-r border-gray-100">Site Code</th>
-                    <th className="px-6 py-4 border-b border-r border-gray-100 text-blue-800 bg-blue-50/30">Mason Days</th>
-                    <th className="px-6 py-4 border-b border-r border-gray-100 text-blue-800 bg-blue-50/30">Mason Extra</th>
-                    <th className="px-6 py-4 border-b border-r border-gray-100 text-purple-800 bg-purple-50/30">Half Mason Days</th>
-                    <th className="px-6 py-4 border-b border-r border-gray-100 text-purple-800 bg-purple-50/30">Half Mason Extra</th>
-                    <th className="px-6 py-4 border-b border-r border-gray-100 text-orange-800 bg-orange-50/30">Helper Days</th>
-                    <th className="px-6 py-4 border-b border-gray-100 text-orange-800 bg-orange-50/30">Helper Extra</th>
+                    {activeTab === 'day' && <th className="px-4 lg:px-6 py-4 border-b border-r border-gray-100">Day</th>}
+                    <th className="px-4 lg:px-6 py-4 border-b border-r border-gray-100">Site Code</th>
+                    <th className="px-4 lg:px-6 py-4 border-b border-r border-gray-100 text-blue-800 bg-blue-50/30">Mason Days</th>
+                    <th className="px-4 lg:px-6 py-4 border-b border-r border-gray-100 text-blue-800 bg-blue-50/30">Mason Extra</th>
+                    <th className="px-4 lg:px-6 py-4 border-b border-r border-gray-100 text-purple-800 bg-purple-50/30">HM Days</th>
+                    <th className="px-4 lg:px-6 py-4 border-b border-r border-gray-100 text-purple-800 bg-purple-50/30">HM Extra</th>
+                    <th className="px-4 lg:px-6 py-4 border-b border-r border-gray-100 text-orange-800 bg-orange-50/30">Helper Days</th>
+                    <th className="px-4 lg:px-6 py-4 border-b border-gray-100 text-orange-800 bg-orange-50/30">Helper Extra</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredData.length > 0 ? (
                     filteredData.map((row, idx) => (
                       <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50/80 bg-white transition-colors">
-                        {activeTab === 'day' && <td className="px-6 py-4 border-r border-gray-50 font-bold text-gray-900">{row.day}</td>}
-                        <td className="px-6 py-4 border-r border-gray-50 font-bold text-gray-700">{row.site}</td>
-                        <td className="px-6 py-4 border-r border-gray-50 font-medium text-gray-900">{row.masonReg}</td>
-                        <td className="px-6 py-4 border-r border-gray-50 text-gray-500">{row.masonOT}</td>
-                        <td className="px-6 py-4 border-r border-gray-50 font-bold text-purple-800">{row.halfMasonReg}</td>
-                        <td className="px-6 py-4 border-r border-gray-50 text-purple-600">{row.halfMasonOT}</td>
-                        <td className="px-6 py-4 border-r border-gray-50 font-medium text-gray-900">{row.helperReg}</td>
-                        <td className="px-6 py-4 text-gray-500">{row.helperOT}</td>
+                        {activeTab === 'day' && <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-bold text-gray-900">{row.day}</td>}
+                        <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-bold text-gray-700">{row.site}</td>
+                        <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-medium text-gray-900">{row.masonReg}</td>
+                        <td className="px-4 lg:px-6 py-4 border-r border-gray-50 text-gray-500">{row.masonOT}</td>
+                        <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-bold text-purple-800">{row.halfMasonReg}</td>
+                        <td className="px-4 lg:px-6 py-4 border-r border-gray-50 text-purple-600">{row.halfMasonOT}</td>
+                        <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-medium text-gray-900">{row.helperReg}</td>
+                        <td className="px-4 lg:px-6 py-4 text-gray-500">{row.helperOT}</td>
                       </tr>
                     ))
                   ) : (
@@ -541,17 +609,55 @@ export default function App() {
                 {filteredData.length > 0 && (
                   <tfoot className="bg-gray-100/90 sticky bottom-0 z-10 backdrop-blur-md shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] border-t-2 border-gray-200">
                     <tr>
-                      <td colSpan={activeTab === 'day' ? 2 : 1} className="px-6 py-4 text-right font-black text-gray-900">GRAND TOTAL:</td>
-                      <td className="px-6 py-4 font-black text-blue-900 text-base">{totals.masonReg}</td>
-                      <td className="px-6 py-4 font-bold text-blue-700">{totals.masonOT}</td>
-                      <td className="px-6 py-4 font-black text-purple-900 text-base">{totals.halfMasonReg}</td>
-                      <td className="px-6 py-4 font-bold text-purple-700">{totals.halfMasonOT}</td>
-                      <td className="px-6 py-4 font-black text-orange-900 text-base">{totals.helperReg}</td>
-                      <td className="px-6 py-4 font-bold text-orange-700">{totals.helperOT}</td>
+                      <td colSpan={activeTab === 'day' ? 2 : 1} className="px-4 lg:px-6 py-4 text-right font-black text-gray-900">GRAND TOTAL:</td>
+                      <td className="px-4 lg:px-6 py-4 font-black text-blue-900 text-base">{totals.masonReg}</td>
+                      <td className="px-4 lg:px-6 py-4 font-bold text-blue-700">{totals.masonOT}</td>
+                      <td className="px-4 lg:px-6 py-4 font-black text-purple-900 text-base">{totals.halfMasonReg}</td>
+                      <td className="px-4 lg:px-6 py-4 font-bold text-purple-700">{totals.halfMasonOT}</td>
+                      <td className="px-4 lg:px-6 py-4 font-black text-orange-900 text-base">{totals.helperReg}</td>
+                      <td className="px-4 lg:px-6 py-4 font-bold text-orange-700">{totals.helperOT}</td>
                     </tr>
                   </tfoot>
                 )}
               </table>
+
+              {/* MOBILE CARDS FOR DATA VIEW */}
+              <div className="block md:hidden p-3 space-y-4">
+                {filteredData.length > 0 ? (
+                  filteredData.map((row, idx) => (
+                    <div key={idx} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 space-y-3">
+                      <div className="flex justify-between items-center border-b border-gray-50 pb-2">
+                        <span className="text-sm font-black text-gray-800 bg-gray-100 px-3 py-1.5 rounded-lg truncate max-w-[200px]">Site: {row.site}</span>
+                        {activeTab === 'day' && <span className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg whitespace-nowrap">Day {row.day}</span>}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="bg-blue-50/50 p-2.5 rounded-xl border border-blue-100"><p className="text-blue-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">Mason Days</p><p className="text-base font-black text-blue-900">{row.masonReg}</p></div>
+                        <div className="bg-blue-50/50 p-2.5 rounded-xl border border-blue-100"><p className="text-blue-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">Mason Extra</p><p className="text-base font-black text-blue-900">{row.masonOT} <span className="text-[10px] font-medium text-blue-400">h</span></p></div>
+                        <div className="bg-purple-50/50 p-2.5 rounded-xl border border-purple-100"><p className="text-purple-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">HM Days</p><p className="text-base font-black text-purple-900">{row.halfMasonReg}</p></div>
+                        <div className="bg-purple-50/50 p-2.5 rounded-xl border border-purple-100"><p className="text-purple-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">HM Extra</p><p className="text-base font-black text-purple-900">{row.halfMasonOT} <span className="text-[10px] font-medium text-purple-400">h</span></p></div>
+                        <div className="bg-orange-50/50 p-2.5 rounded-xl border border-orange-100"><p className="text-orange-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">Helper Days</p><p className="text-base font-black text-orange-900">{row.helperReg}</p></div>
+                        <div className="bg-orange-50/50 p-2.5 rounded-xl border border-orange-100"><p className="text-orange-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">Helper Extra</p><p className="text-base font-black text-orange-900">{row.helperOT} <span className="text-[10px] font-medium text-orange-400">h</span></p></div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-12 text-gray-500 font-medium bg-white rounded-2xl border border-gray-100">No sites found</div>
+                )}
+                
+                {filteredData.length > 0 && (
+                  <div className="bg-gray-900 p-5 rounded-2xl shadow-xl mt-4 border border-gray-800">
+                    <h3 className="text-white font-black text-center text-sm mb-4 tracking-wider">GRAND TOTAL</h3>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Mason Days</p><p className="text-lg font-black text-white">{totals.masonReg}</p></div>
+                      <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Mason Extra</p><p className="text-lg font-black text-white">{totals.masonOT} <span className="text-[10px] font-medium text-gray-500">h</span></p></div>
+                      <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-purple-400 font-bold mb-0.5 uppercase text-[9px]">Total HM Days</p><p className="text-lg font-black text-purple-200">{totals.halfMasonReg}</p></div>
+                      <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-purple-400 font-bold mb-0.5 uppercase text-[9px]">Total HM Extra</p><p className="text-lg font-black text-purple-200">{totals.halfMasonOT} <span className="text-[10px] font-medium text-gray-500">h</span></p></div>
+                      <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Helper Days</p><p className="text-lg font-black text-white">{totals.helperReg}</p></div>
+                      <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Helper Extra</p><p className="text-lg font-black text-white">{totals.helperOT} <span className="text-[10px] font-medium text-gray-500">h</span></p></div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
