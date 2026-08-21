@@ -4,7 +4,7 @@ import { getAuth } from "firebase/auth";
 
 // ⚠️ REPLACE THIS BLOCK WITH YOUR ACTUAL KEYS FROM FIREBASE
 const firebaseConfig = {
-  apiKey: "IzaSyDllUvbEQs41D4RA2_2FQKMNh_A2cL_G4o",
+  apiKey: "AIzaSyDllUvbEQs41D4RA2_2FQKMNh_A2cL_G4o",
   authDomain: "crm-fix.firebaseapp.com",
   projectId: "crm-fix",
   storageBucket: "crm-fix.firebasestorage.app",
