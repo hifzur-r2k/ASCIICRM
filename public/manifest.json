@@ -1,0 +1,15 @@
+{
+  "short_name": "CRM_FIX",
+  "name": "CRM_FIX Attendance Engine",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#2563EB",
+  "background_color": "#f8fafc"
+}
