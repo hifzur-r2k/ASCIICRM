@@ -7,14 +7,11 @@ import {
   Save, Trash2, Database, Clock, Check, BarChart3, Edit2,
   LogOut, Lock, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, MapPin, HardHat, RefreshCw
 } from 'lucide-react';
-// FIREBASE IMPORTS
 import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, setDoc } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth } from './firebase';
 
-const PREDEFINED_CONTRACTORS = ["Arvind", "Laljeet", "Deepak"];
-
-// NEW: Calculates which 15-day Bucket a date belongs to
+// Helper: Calculates which 15-day Bucket a date belongs to
 const getPeriodKey = (dateString) => {
   const d = new Date(dateString);
   const year = d.getFullYear();
@@ -27,13 +24,12 @@ const getPeriodKey = (dateString) => {
   const displayRange = half === 'H1' ? '1-15' : '16-31';
 
   return {
-    id: `${year}-${month}-${half}`, // e.g., "2026-08-H2"
-    displayName: `${displayMonth} ${displayRange} ${year}` // e.g., "Aug 16-31 2026"
+    id: `${year}-${month}-${half}`,
+    displayName: `${displayMonth} ${displayRange} ${year}`
   };
 };
 
 export default function App() {
-  // --- AUTHENTICATION & ROLE STATE ---
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [email, setEmail] = useState("");
@@ -41,18 +37,21 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [activeRole, setActiveRole] = useState('master_admin');
 
-  // --- MASTER DATA (AUTO-LEARNED FROM EXCEL) ---
   const [masterSites, setMasterSites] = useState([]);
   const [masterWorkers, setMasterWorkers] = useState([]);
+  
+  // Dynamically learn available contractors for Supervisor Dropdown
+  const defaultContractors = ["Arvind", "Laljeet", "Deepak"];
+  const dynamicContractors = Array.from(new Set([...defaultContractors, ...masterWorkers.map(w => w.contractor)])).filter(Boolean);
 
-  // --- MASTER ADMIN STATES (EXCEL PARSER) ---
+  // --- MASTER ADMIN STATES ---
   const [siteData, setSiteData] = useState([]);
   const [dayData, setDayData] = useState([]);
-  const [workerData, setWorkerData] = useState([])
+  const [workerData, setWorkerData] = useState([]);
   const [activeTab, setActiveTab] = useState('day');
   const [sheetName, setSheetName] = useState("");
   const [sheetMonth, setSheetMonth] = useState("");
-  const [sheetContractor, setSheetContractor] = useState("");
+  const [sheetContractor, setSheetContractor] = useState(""); 
   const [selectedRecordContractor, setSelectedRecordContractor] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const fileInputRef = useRef(null);
@@ -63,10 +62,7 @@ export default function App() {
   const [hasSavedCurrent, setHasSavedCurrent] = useState(false);
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
 
-  // --- LEDGER STATES ---
-  const [dailyLogs, setDailyLogs] = useState([]);
-  const [ledgerWorker, setLedgerWorker] = useState("");
-  const [ledgerMonth, setLedgerMonth] = useState("");
+  // --- ANALYTICS STATES ---
   const [globalSearch, setGlobalSearch] = useState("");
   const [analyticsMode, setAnalyticsMode] = useState('single');
   const [compareSiteInput, setCompareSiteInput] = useState("");
@@ -99,15 +95,18 @@ export default function App() {
 
   const handleLogout = async () => {
     await signOut(auth);
-    setSiteData([]); setDayData([]); setDashboardTab('upload');
+    goHome();
   };
 
-  // --- FETCH CLOUD DATA ---
+  const goHome = () => {
+    setSiteData([]); setDayData([]); setWorkerData([]); 
+    setSelectedRecordContractor(null); setDashboardTab('upload');
+  };
+
   const fetchData = async () => {
     if (!user) return;
     setIsLoadingRecords(true);
     try {
-      // 1. Fetch Saved Sheets
       const sheetsSnap = await getDocs(collection(db, "attendance_sheets"));
       const sheets = [];
       let aggregatedSites = new Set();
@@ -119,36 +118,23 @@ export default function App() {
           data.siteData.forEach(s => { if (s.site) aggregatedSites.add(s.site); });
         }
       });
-      sheets.sort((a, b) => b.createdAt - a.createdAt);
+      // Sort buckets descending by ID (e.g. 2026-08-H2 before 2026-08-H1)
+      sheets.sort((a, b) => b.id.localeCompare(a.id));
       setSavedSheets(sheets);
 
-      // 2. Fetch Master Data from Firebase
       let loadedSites = Array.from(aggregatedSites);
       let loadedWorkers = [];
 
       try {
         const masterSnap = await getDocs(collection(db, "master_data"));
         masterSnap.forEach(docSnap => {
-          if (docSnap.id === "sites" && docSnap.data().list) {
-            loadedSites = Array.from(new Set([...loadedSites, ...docSnap.data().list]));
-          }
-          if (docSnap.id === "workers" && docSnap.data().list) {
-            loadedWorkers = docSnap.data().list;
-          }
+          if (docSnap.id === "sites" && docSnap.data().list) loadedSites = Array.from(new Set([...loadedSites, ...docSnap.data().list]));
+          if (docSnap.id === "workers" && docSnap.data().list) loadedWorkers = docSnap.data().list;
         });
-      } catch (err) {
-        console.warn("master_data collection fallback:", err);
-      }
+      } catch (err) { console.warn("master_data missing:", err); }
 
       setMasterSites(loadedSites.sort());
       setMasterWorkers(loadedWorkers);
-
-      // 3. Fetch Daily Field Logs for the Ledger
-      const logsSnap = await getDocs(collection(db, "daily_logs"));
-      const logs = [];
-      logsSnap.forEach(docSnap => logs.push({ id: docSnap.id, ...docSnap.data() }));
-      setDailyLogs(logs.sort((a, b) => new Date(b.date) - new Date(a.date)));
-
     } catch (error) { console.error("Error fetching data:", error); }
     setIsLoadingRecords(false);
   };
@@ -170,33 +156,29 @@ export default function App() {
     return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
   };
 
-  // --- DAILY EXCEL PARSER ---
+  // --- EXCEL PARSER ---
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    const cleanFileName = file.name.replace(/\.[^/.]+$/, "");
+    const rawName = file.name.replace(/\.[^/.]+$/, "");
+    const firstWord = rawName.split(/[\s_.-]+/)[0];
+    const detectedContractor = firstWord.charAt(0).toUpperCase() + firstWord.slice(1).toLowerCase();
+
     const monthNames = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
-    const mMatch = cleanFileName.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i);
-    const yMatch = cleanFileName.match(/(202\d)/);
+    const mMatch = rawName.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i);
+    const yMatch = rawName.match(/(202\d)/);
     const m = mMatch ? monthNames[mMatch[0].toLowerCase()] : String(new Date().getMonth() + 1).padStart(2, '0');
     const y = yMatch ? yMatch[0] : String(new Date().getFullYear());
     const detectedMonth = `${y}-${m}`;
 
-    // Auto-Detect Contractor from Excel File Name
-    let detectedContractor = "Unknown";
-    if (cleanFileName.toLowerCase().includes("arvind")) detectedContractor = "Arvind";
-    else if (cleanFileName.toLowerCase().includes("laljeet")) detectedContractor = "Laljeet";
-    else if (cleanFileName.toLowerCase().includes("deepak")) detectedContractor = "Deepak";
-
     const reader = new FileReader();
-
     reader.onload = async (evt) => {
       const bstr = evt.target.result;
       const wb = XLSX.read(bstr, { type: 'binary' });
       let rawData = [];
 
-      setSheetName(cleanFileName);
+      setSheetName(rawName);
       setSheetMonth(detectedMonth);
       setSheetContractor(detectedContractor);
       setSelectedRecordContractor(null);
@@ -306,15 +288,12 @@ export default function App() {
   const handleMasterRosterUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
-    const cleanFileName = file.name.replace(/\.[^/.]+$/, "").toLowerCase();
-    let detectedContractor = "Arvind";
-    if (cleanFileName.includes("laljeet")) detectedContractor = "Laljeet";
-    if (cleanFileName.includes("deepak")) detectedContractor = "Deepak";
+    const rawName = file.name.replace(/\.[^/.]+$/, "");
+    const firstWord = rawName.split(/[\s_.-]+/)[0];
+    const detectedContractor = firstWord.charAt(0).toUpperCase() + firstWord.slice(1).toLowerCase();
 
     setIsLoadingRecords(true);
     const reader = new FileReader();
-
     reader.onload = async (evt) => {
       const bstr = evt.target.result;
       const wb = XLSX.read(bstr, { type: 'binary' });
@@ -328,34 +307,25 @@ export default function App() {
       for (let r = 0; r < rows.length; r++) {
         const row = rows[r];
         if (!row || row.length === 0) continue;
-
         const col0 = String(row[0]).trim().toUpperCase();
         const col1 = String(row[1]).trim().toUpperCase();
-
         if (col0.includes("HELPER") || col1.includes("HELPER") || col0.includes("LABOUR") || col1.includes("LABOUR")) { activeSection = "Helper"; }
         else if ((col0.includes("MASON") || col1.includes("MASON")) && !col0.includes("HALF") && !col1.includes("HALF")) { activeSection = "Mason"; }
-
         let rowWorkerType = activeSection;
         if (/\bHM\b/.test(col0) || /\bHM\b/.test(col1) || col1.includes("HALF MASON") || col0.includes("HALF MASON")) { rowWorkerType = "HalfMason"; }
-
         const col0Clean = col0.replace(/[^A-Z]/g, '');
         if (col0Clean === "SN" || col0Clean === "SNO" || col0 === "S.N.") {
           wagesColIdx = -1;
-          for (let c = 0; c < row.length; c++) {
-            if (String(row[c]).trim().toUpperCase() === "WAGES") wagesColIdx = c;
-          }
+          for (let c = 0; c < row.length; c++) { if (String(row[c]).trim().toUpperCase() === "WAGES") wagesColIdx = c; }
           continue;
         }
-
         if (/^\d+$/.test(col0) && col1 !== "" && col1 !== "OT" && col1 !== "NAN") {
           const workerName = String(row[1]).trim();
           let dailyWage = 0;
-
           if (wagesColIdx !== -1 && row[wagesColIdx]) {
             const parsedWage = parseFloat(String(row[wagesColIdx]).replace(/[^0-9.]/g, ''));
             if (!isNaN(parsedWage)) dailyWage = parsedWage;
           }
-
           if (workerName && workerName.length > 1) {
             newRosterWorkers[`${detectedContractor}_${workerName}`] = {
               name: workerName, type: rowWorkerType, contractor: detectedContractor, wage: dailyWage || 0, otRate: (dailyWage || 0) / 8
@@ -369,7 +339,6 @@ export default function App() {
           let combinedWorkers = [...masterWorkers];
           combinedWorkers = combinedWorkers.filter(w => w.contractor !== detectedContractor);
           Object.values(newRosterWorkers).forEach(newW => combinedWorkers.push(newW));
-
           await setDoc(doc(db, "master_data", "workers"), { list: combinedWorkers });
           setMasterWorkers(combinedWorkers);
           alert(`Success! Updated ${Object.keys(newRosterWorkers).length} workers for ${detectedContractor}.`);
@@ -380,6 +349,7 @@ export default function App() {
     reader.readAsBinaryString(file);
   };
 
+  // SMART MERGE FOR EXCEL UPLOADS
   const saveToDatabase = async () => {
     if (hasSavedCurrent || !sheetMonth || !sheetContractor) return;
     setIsSaving(true);
@@ -390,7 +360,6 @@ export default function App() {
 
     try {
       const docRef = doc(db, "attendance_sheets", period.id);
-
       let existingData = { sheetName: period.displayName, siteData: [], dayData: [], workerData: [], createdAt: Date.now() };
       const docSnap = await getDocs(collection(db, "attendance_sheets"));
       docSnap.forEach(d => { if (d.id === period.id) existingData = d.data(); });
@@ -419,44 +388,23 @@ export default function App() {
     setIsSaving(false);
   };
 
-  const renameRecord = async (id, currentName, e) => {
-    e.stopPropagation();
-    const newName = window.prompt("Enter a new name for this sheet:", currentName);
-    if (!newName || newName.trim() === "" || newName === currentName) return;
-    try {
-      await updateDoc(doc(db, "attendance_sheets", id), { sheetName: newName.trim() });
-      setSavedSheets(savedSheets.map(sheet => sheet.id === id ? { ...sheet, sheetName: newName.trim() } : sheet));
-      if (hasSavedCurrent && sheetName === currentName) setSheetName(newName.trim());
-    } catch (error) { console.error("Error renaming:", error); }
-  };
-
   const deleteRecord = async (id, e) => {
     e.stopPropagation();
-    if (!window.confirm("Are you sure you want to permanently delete this record?")) return;
+    if (!window.confirm("Are you sure you want to permanently delete this entire 15-day period?")) return;
     try {
       await deleteDoc(doc(db, "attendance_sheets", id));
       setSavedSheets(savedSheets.filter(sheet => sheet.id !== id));
-      if (hasSavedCurrent) { setSiteData([]); setDayData([]); setWorkerData([]); }
+      if (hasSavedCurrent) goHome();
     } catch (error) { console.error("Error deleting:", error); }
   };
 
   const loadSavedRecord = (sheet) => {
-    setSheetName(sheet.sheetName); setSheetMonth(sheet.sheetMonth || ""); setSheetContractor(sheet.contractor || "Unknown");
+    setSheetName(sheet.sheetName); setSheetMonth(sheet.id.substring(0, 7)); // e.g. "2026-08"
     setSiteData(sheet.siteData || []); setDayData(sheet.dayData || []); setWorkerData(sheet.workerData || []);
-    setHasSavedCurrent(true); setSearchQuery("");
-    setSelectedRecordContractor(null);
+    setHasSavedCurrent(true); setSearchQuery(""); setSelectedRecordContractor(null);
   };
 
   // --- ANALYTICS ENGINE ---
-  const isSheetInDateRange = (sheetTimestamp) => {
-    if (!startDate && !endDate) return true;
-    const sheetDateObj = new Date(sheetTimestamp);
-    const sheetDateKey = sheetDateObj.getFullYear() + '-' + String(sheetDateObj.getMonth() + 1).padStart(2, '0') + '-' + String(sheetDateObj.getDate()).padStart(2, '0');
-    if (startDate && sheetDateKey < startDate) return false;
-    if (endDate && sheetDateKey > endDate) return false;
-    return true;
-  };
-
   const getGlobalAnalytics = () => {
     if (!globalSearch.trim()) return null;
     const targetSite = globalSearch.toLowerCase().trim();
@@ -464,9 +412,9 @@ export default function App() {
     let totals = { masonReg: 0, masonOT: 0, halfMasonReg: 0, halfMasonOT: 0, helperReg: 0, helperOT: 0, totalSpend: 0 };
 
     savedSheets.forEach(sheet => {
-      const sMonth = sheet.sheetMonth || "2026-08";
       let sheetMason = 0, sheetMasonOT = 0, sheetHM = 0, sheetHMOT = 0, sheetHelper = 0, sheetHelperOT = 0, sheetSpend = 0;
       let sheetHasMatchingData = false;
+      const sMonth = sheet.id.substring(0, 7);
 
       (sheet.dayData || []).forEach(d => {
         if (d.site.toLowerCase() === targetSite) {
@@ -474,7 +422,6 @@ export default function App() {
           let inRange = true;
           if (startDate && recordDateStr < startDate) inRange = false;
           if (endDate && recordDateStr > endDate) inRange = false;
-
           if (inRange) {
             sheetHasMatchingData = true;
             sheetMason += d.masonReg || 0; sheetMasonOT += d.masonOT || 0;
@@ -484,10 +431,9 @@ export default function App() {
           }
         }
       });
-
       if (sheetHasMatchingData) {
         results.push({
-          sheetName: sheet.sheetName, date: sheet.createdAt,
+          sheetName: sheet.sheetName, date: sheet.updatedAt || sheet.createdAt,
           masonReg: sheetMason, masonOT: sheetMasonOT, halfMasonReg: sheetHM, halfMasonOT: sheetHMOT,
           helperReg: sheetHelper, helperOT: sheetHelperOT, totalBaseCost: sheetSpend, totalOTCost: 0
         });
@@ -515,8 +461,8 @@ export default function App() {
     compareSitesList.forEach(siteCode => {
       let sTotals = { occurrences: 0, masonReg: 0, masonOT: 0, halfMasonReg: 0, halfMasonOT: 0, helperReg: 0, helperOT: 0, siteSpend: 0 };
       savedSheets.forEach(sheet => {
-        const sMonth = sheet.sheetMonth || "2026-08";
         let sheetHasMatchingData = false;
+        const sMonth = sheet.id.substring(0, 7);
         (sheet.dayData || []).forEach(d => {
           if (d.site.toLowerCase() === siteCode.toLowerCase()) {
             const recordDateStr = `${sMonth}-${String(d.day).padStart(2, '0')}`;
@@ -546,12 +492,9 @@ export default function App() {
   };
   const multiSiteData = getMultiSiteAnalytics();
 
+  // --- DRILL DOWN DATA FILTERS ---
   const activeData = activeTab === 'site' ? siteData : activeTab === 'day' ? dayData : workerData;
-
-  const contractorFilteredData = selectedRecordContractor
-    ? activeData.filter(row => row.contractor === selectedRecordContractor)
-    : activeData;
-
+  const contractorFilteredData = selectedRecordContractor ? activeData.filter(row => row.contractor === selectedRecordContractor) : activeData;
   const filteredData = contractorFilteredData.filter(row => row.site ? row.site.toLowerCase().includes(searchQuery.toLowerCase()) : row.worker.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const totals = filteredData.reduce((acc, row) => {
@@ -569,21 +512,15 @@ export default function App() {
     return acc;
   }, { masonReg: 0, masonOT: 0, halfMasonReg: 0, halfMasonOT: 0, helperReg: 0, helperOT: 0, totalBaseCost: 0, totalOTCost: 0 });
 
-  const exportToExcel = () => { }; const exportToPDF = () => { }; // Omitted for brevity
+  const exportToExcel = () => { }; const exportToPDF = () => { }; 
 
-  // --- SUPERVISOR ROSTER LOGIC ---
+  // --- SUPERVISOR ROSTER LOGIC & SUBMIT ---
   const handleAttendanceChange = (name, status) => {
-    setSupAttendance(prev => ({
-      ...prev,
-      [name]: { ...prev[name], status: status, ot: status === 'absent' ? '' : prev[name].ot }
-    }));
+    setSupAttendance(prev => ({ ...prev, [name]: { ...prev[name], status: status, ot: status === 'absent' ? '' : prev[name].ot } }));
   };
 
   const handleOTChange = (name, otValue) => {
-    setSupAttendance(prev => ({
-      ...prev,
-      [name]: { ...prev[name], ot: otValue }
-    }));
+    setSupAttendance(prev => ({ ...prev, [name]: { ...prev[name], ot: otValue } }));
   };
 
   const submitDailyLog = async () => {
@@ -608,11 +545,7 @@ export default function App() {
           const bCost = regDays * (workerInfo.wage || 0);
           const oCost = otHours * (workerInfo.otRate || ((workerInfo.wage || 0) / 8));
 
-          logWorkers.push({
-            worker: workerInfo.name, type: workerInfo.type, contractor: supContractor,
-            regDays: regDays, otHours: otHours, totalBaseCost: bCost, totalOTCost: oCost
-          });
-
+          logWorkers.push({ worker: workerInfo.name, type: workerInfo.type, contractor: supContractor, regDays: regDays, otHours: otHours, totalBaseCost: bCost, totalOTCost: oCost });
           dTotalBaseCost += bCost; dTotalOTCost += oCost;
           if (workerInfo.type === 'Mason') { dMasonReg += regDays; dMasonOT += otHours; }
           else if (workerInfo.type === 'HalfMason') { dHMMasonReg += regDays; dHMMasonOT += otHours; }
@@ -621,17 +554,13 @@ export default function App() {
       }
     });
 
-    if (logWorkers.length === 0) {
-      alert("No workers marked present. Nothing to save.");
-      setIsSubmittingLog(false); return;
-    }
+    if (logWorkers.length === 0) { alert("No workers marked present. Nothing to save."); setIsSubmittingLog(false); return; }
 
     const todaySiteData = { site: supSite, contractor: supContractor, masonReg: dMasonReg, masonOT: dMasonOT, halfMasonReg: dHMMasonReg, halfMasonOT: dHMMasonOT, helperReg: dHelperReg, helperOT: dHelperOT, totalBaseCost: dTotalBaseCost, totalOTCost: dTotalOTCost };
     const todayDayData = { day: dayNum, site: supSite, contractor: supContractor, masonReg: dMasonReg, masonOT: dMasonOT, halfMasonReg: dHMMasonReg, halfMasonOT: dHMMasonOT, helperReg: dHelperReg, helperOT: dHelperOT, totalBaseCost: dTotalBaseCost, totalOTCost: dTotalOTCost };
 
     try {
       const docRef = doc(db, "attendance_sheets", period.id);
-
       let existingData = { sheetName: period.displayName, siteData: [], dayData: [], workerData: [], createdAt: Date.now() };
       const docSnap = await getDocs(collection(db, "attendance_sheets"));
       docSnap.forEach(d => { if (d.id === period.id) existingData = d.data(); });
@@ -644,9 +573,7 @@ export default function App() {
         if (existingW) {
           existingW.regDays += newW.regDays; existingW.otHours += newW.otHours;
           existingW.totalBaseCost += newW.totalBaseCost; existingW.totalOTCost += newW.totalOTCost;
-        } else {
-          currentWorkerData.push(newW);
-        }
+        } else { currentWorkerData.push(newW); }
       });
 
       let currentSiteData = [...(existingData.siteData || [])];
@@ -656,27 +583,16 @@ export default function App() {
         existingSite.halfMasonReg += dHMMasonReg; existingSite.halfMasonOT += dHMMasonOT;
         existingSite.helperReg += dHelperReg; existingSite.helperOT += dHelperOT;
         existingSite.totalBaseCost += dTotalBaseCost; existingSite.totalOTCost += dTotalOTCost;
-      } else {
-        currentSiteData.push(todaySiteData);
-      }
+      } else { currentSiteData.push(todaySiteData); }
 
-      await setDoc(docRef, {
-        sheetName: period.displayName,
-        siteData: currentSiteData,
-        dayData: [...safeDayData, todayDayData],
-        workerData: currentWorkerData,
-        updatedAt: Date.now()
-      });
-
+      await setDoc(docRef, { sheetName: period.displayName, siteData: currentSiteData, dayData: [...safeDayData, todayDayData], workerData: currentWorkerData, updatedAt: Date.now() });
       await addDoc(collection(db, "daily_logs"), { date: supDate, site: supSite, contractor: supContractor, workers: logWorkers, timestamp: Date.now() });
 
       alert(`Attendance locked into bucket: ${period.displayName}!`);
-      setSupContractor(""); setWorkerSearch("");
-      fetchData();
+      setSupContractor(""); setWorkerSearch(""); fetchData();
     } catch (err) { alert("Error saving attendance to bucket."); console.error(err); }
     setIsSubmittingLog(false);
   };
-
 
   // --- RENDER LOGIC ---
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-[#f8fafc] text-gray-500 font-bold">Initializing Secure Environment...</div>;
@@ -705,11 +621,11 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#f8fafc] text-gray-800 font-sans selection:bg-blue-100 selection:text-blue-900 pb-12">
 
-      {/* GLOBAL HEADER WITH DEV ROLE TOGGLE */}
+      {/* GLOBAL HEADER */}
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex justify-between items-center shadow-sm sticky top-0 z-50">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity" onClick={goHome} title="Go to Dashboard">
           <div className={`p-1.5 rounded-lg ${activeRole === 'master_admin' ? 'bg-blue-600' : 'bg-emerald-600'}`}><LayoutGrid className="w-4 h-4 text-white" /></div>
-          <span className="font-black text-gray-900 text-sm tracking-tight">CRM_FIX <span className="text-gray-400 font-medium">| {activeRole === 'master_admin' ? 'Master' : 'Field'}</span></span>
+          <span className="font-black text-gray-900 text-sm tracking-tight">CRM_FIX <span className="text-gray-400 font-medium hidden sm:inline">| {activeRole === 'master_admin' ? 'Master' : 'Field'}</span></span>
         </div>
         <div className="flex items-center gap-3 md:gap-4">
           <button onClick={fetchData} disabled={isLoadingRecords} className="p-2 bg-gray-100 hover:bg-blue-50 text-gray-600 hover:text-blue-600 rounded-xl transition-all" title="Sync All Records">
@@ -723,11 +639,7 @@ export default function App() {
         </div>
       </header>
 
-
-      {/* ============================================================== */}
-      {/*                 SUPERVISOR FIELD PORTAL                        */}
-      {/* ============================================================== */}
-
+      {/* SUPERVISOR FIELD PORTAL */}
       {activeRole === 'admin' ? (
         <div className="max-w-3xl mx-auto pt-8 md:pt-12 px-4 space-y-6">
           <div className="text-center mb-8">
@@ -736,7 +648,6 @@ export default function App() {
           </div>
 
           <div className="bg-white rounded-[2rem] p-6 md:p-8 shadow-sm border border-gray-100 space-y-6">
-
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex items-center gap-1"><Calendar className="w-3 h-3" /> Work Date</label>
@@ -746,9 +657,7 @@ export default function App() {
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex items-center gap-1"><MapPin className="w-3 h-3" /> Select Site</label>
                 <select value={supSite} onChange={(e) => setSupSite(e.target.value)} className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 rounded-xl text-sm font-bold text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 appearance-none cursor-pointer">
                   <option value="" disabled>Choose a site...</option>
-                  {masterSites.map(site => (
-                    <option key={site} value={site}>{site}</option>
-                  ))}
+                  {masterSites.map(site => <option key={site} value={site}>{site}</option>)}
                 </select>
               </div>
             </div>
@@ -757,9 +666,7 @@ export default function App() {
               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex items-center gap-1"><Users className="w-3 h-3" /> Select Contractor</label>
               <select value={supContractor} onChange={(e) => setSupContractor(e.target.value)} className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 rounded-xl text-sm font-bold text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 appearance-none cursor-pointer">
                 <option value="" disabled>Choose contractor crew...</option>
-                {PREDEFINED_CONTRACTORS.map(contractor => (
-                  <option key={contractor} value={contractor}>{contractor}'s Team</option>
-                ))}
+                {dynamicContractors.map(contractor => <option key={contractor} value={contractor}>{contractor}'s Team</option>)}
               </select>
             </div>
 
@@ -770,7 +677,6 @@ export default function App() {
                     <h3 className="font-black text-gray-900 text-lg">Daily Roster <span className="text-gray-400 font-medium text-sm">({activeContractorWorkers.length} total)</span></h3>
                     <span className="bg-gray-100 text-gray-500 text-[9px] font-bold px-2 py-1 rounded-md uppercase tracking-wider mt-1 inline-block">All Defaulted to Absent</span>
                   </div>
-
                   <div className="relative w-full md:w-64">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input type="text" placeholder="Search worker..." value={workerSearch} onChange={(e) => setWorkerSearch(e.target.value)} className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:bg-white transition-all" />
@@ -778,7 +684,6 @@ export default function App() {
                 </div>
 
                 <div className="space-y-8">
-
                   {masons.length > 0 && (
                     <div className="space-y-3">
                       <h4 className="text-[11px] font-black text-blue-500 uppercase tracking-widest border-b border-gray-100 pb-2 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-500"></div> MASONS</h4>
@@ -877,7 +782,6 @@ export default function App() {
           <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
           {activeData.length === 0 ? (
             <div className="max-w-6xl mx-auto pt-10 md:pt-16 px-4">
-
               <div className="text-center mb-10 space-y-3">
                 <h1 className="text-3xl md:text-5xl font-black tracking-tight text-gray-900">Welcome Back.</h1>
                 <p className="text-sm md:text-base font-bold text-gray-400 uppercase tracking-widest">Financial & Attendance Engine</p>
@@ -893,9 +797,6 @@ export default function App() {
                   </button>
                   <button onClick={() => { setDashboardTab('analytics'); fetchData(); }} className={`whitespace-nowrap px-6 py-3 rounded-full font-bold text-sm transition-all flex items-center gap-2.5 ${dashboardTab === 'analytics' ? 'bg-white text-blue-600 shadow-sm border border-gray-50' : 'text-gray-500 hover:text-gray-700'}`}>
                     <BarChart3 className={`w-4 h-4 ${dashboardTab === 'analytics' ? 'text-blue-600' : 'text-gray-400'}`} /> Global Analytics
-                  </button>
-                  <button onClick={() => { setDashboardTab('ledger'); fetchData(); }} className={`whitespace-nowrap px-6 py-3 rounded-full font-bold text-sm transition-all flex items-center gap-2.5 ${dashboardTab === 'ledger' ? 'bg-white text-blue-600 shadow-sm border border-gray-50' : 'text-gray-500 hover:text-gray-700'}`}>
-                    <Users className={`w-4 h-4 ${dashboardTab === 'ledger' ? 'text-blue-600' : 'text-gray-400'}`} /> Worker Ledger
                   </button>
                 </div>
               </div>
@@ -925,7 +826,7 @@ export default function App() {
                   {isLoadingRecords ? (
                     <div className="flex justify-center items-center h-48 text-gray-400 font-bold">Loading cloud records...</div>
                   ) : savedSheets.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-48 text-gray-400 space-y-4"><Database className="w-12 h-12 text-gray-200" /><p className="font-semibold text-center">No saved sheets found.<br /><span className="text-sm font-normal">Upload and save a sheet to see it here.</span></p></div>
+                    <div className="flex flex-col items-center justify-center h-48 text-gray-400 space-y-4"><Database className="w-12 h-12 text-gray-200" /><p className="font-semibold text-center">No saved buckets found.<br /><span className="text-sm font-normal">Upload and save a sheet to see it here.</span></p></div>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                       {savedSheets.map((sheet) => (
@@ -933,15 +834,13 @@ export default function App() {
                           <div className="flex items-start justify-between">
                             <div className="bg-blue-50 text-blue-600 p-3.5 rounded-2xl"><FileText className="w-5 h-5" /></div>
                             <div className="flex gap-1.5">
-                              <button onClick={(e) => renameRecord(sheet.id, sheet.sheetName, e)} className="text-gray-400 hover:text-blue-600 bg-gray-50 hover:bg-white shadow-sm border border-transparent hover:border-blue-100 rounded-xl p-2 transition-all" title="Rename"><Edit2 className="w-4 h-4" /></button>
-                              <button onClick={(e) => deleteRecord(sheet.id, e)} className="text-gray-400 hover:text-red-600 bg-gray-50 hover:bg-white shadow-sm border border-transparent hover:border-red-100 rounded-xl p-2 transition-all" title="Delete"><Trash2 className="w-4 h-4" /></button>
+                              <button onClick={(e) => deleteRecord(sheet.id, e)} className="text-gray-400 hover:text-red-600 bg-gray-50 hover:bg-white shadow-sm border border-transparent hover:border-red-100 rounded-xl p-2 transition-all" title="Delete Period"><Trash2 className="w-4 h-4" /></button>
                             </div>
                           </div>
                           <div>
-                            <h3 className="font-black text-gray-800 text-base md:text-lg truncate group-hover:text-blue-700" title={sheet.sheetName}>{sheet.sheetName}</h3>
+                            <h3 className="font-black text-gray-800 text-base md:text-lg group-hover:text-blue-700" title={sheet.sheetName}>{sheet.sheetName}</h3>
                             <div className="flex items-center justify-between mt-2">
-                              <p className="text-[10px] md:text-xs font-bold text-gray-400 flex items-center gap-1.5"><Clock className="w-3 h-3" /> {new Date(sheet.createdAt).toLocaleDateString()}</p>
-                              {sheet.sheetMonth && <span className="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-1 rounded-md">{sheet.sheetMonth}</span>}
+                              <span className="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-1 rounded-md">{sheet.id}</span>
                             </div>
                           </div>
                         </div>
@@ -1032,7 +931,6 @@ export default function App() {
                                 <div key={idx} className="p-4 hover:bg-gray-50 transition-colors flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                                   <div className="max-w-full md:max-w-[200px]">
                                     <h4 className="font-black text-gray-800 text-base md:text-lg truncate" title={record.sheetName}>{record.sheetName}</h4>
-                                    <p className="text-xs font-semibold text-gray-400 flex items-center gap-1 mt-0.5"><Clock className="w-3 h-3" /> {new Date(record.date).toLocaleDateString()}</p>
                                   </div>
                                   <div className="flex gap-2 md:gap-4 flex-wrap w-full md:w-auto justify-between md:justify-end items-center">
                                     <div className="text-center bg-white p-2 rounded-xl border border-gray-100 flex-1 md:flex-none min-w-[75px]">
@@ -1144,150 +1042,45 @@ export default function App() {
                   )}
                 </div>
               )}
-              {/* TAB 4: WORKER LEDGER */}
-              {dashboardTab === 'ledger' && (
-                <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07)] border border-gray-100 min-h-[400px] max-w-5xl mx-auto">
-                  <div className="text-center mb-8">
-                    <h2 className="text-2xl md:text-3xl font-black text-gray-900">Worker Financial Ledger</h2>
-                    <p className="text-sm font-bold text-gray-400 mt-2 uppercase tracking-widest">Verify Daily Logs & Calculate Payouts</p>
-                  </div>
-
-                  <div className="flex flex-col md:flex-row gap-4 mb-8 max-w-2xl mx-auto">
-                    <div className="flex-1 relative">
-                      <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input type="text" placeholder="Search worker name..." value={ledgerWorker} onChange={(e) => setLedgerWorker(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-gray-50 border border-gray-200 rounded-2xl font-bold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all shadow-sm" />
-                    </div>
-                    <div className="flex-1 relative">
-                      <Calendar className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input type="month" value={ledgerMonth} onChange={(e) => setLedgerMonth(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-gray-50 border border-gray-200 rounded-2xl font-bold text-gray-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all cursor-pointer uppercase shadow-sm" />
-                    </div>
-                  </div>
-
-                  {ledgerWorker.length >= 2 ? (
-                    <div className="space-y-6">
-                      {(() => {
-                        const filteredLogs = dailyLogs.flatMap(log => {
-                          const workerEntry = log.workers?.find(w => w.name.toLowerCase().includes(ledgerWorker.toLowerCase()));
-                          if (!workerEntry) return [];
-                          if (ledgerMonth && !log.date.startsWith(ledgerMonth)) return [];
-                          return [{ ...workerEntry, date: log.date, site: log.site, contractor: log.contractor }];
-                        }).sort((a, b) => new Date(b.date) - new Date(a.date));
-
-                        if (filteredLogs.length === 0) return <div className="text-center p-12 bg-gray-50 rounded-[2rem] border border-gray-200 border-dashed text-gray-500 font-bold">No attendance records found for "{ledgerWorker}".</div>;
-
-                        const totalBase = filteredLogs.reduce((sum, r) => sum + (r.baseCost || 0), 0);
-                        const totalOT = filteredLogs.reduce((sum, r) => sum + (r.otCost || 0), 0);
-                        const totalDays = filteredLogs.reduce((sum, r) => sum + (r.regDays || 0), 0);
-                        const totalOTHours = filteredLogs.reduce((sum, r) => sum + (r.otHours || 0), 0);
-
-                        return (
-                          <>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                              <div className="bg-blue-50 p-5 rounded-3xl border border-blue-100"><p className="text-[10px] uppercase font-black text-blue-500 mb-1 tracking-wider">Total Days</p><p className="text-2xl md:text-3xl font-black text-blue-900">{totalDays}</p></div>
-                              <div className="bg-purple-50 p-5 rounded-3xl border border-purple-100"><p className="text-[10px] uppercase font-black text-purple-500 mb-1 tracking-wider">OT Hours</p><p className="text-2xl md:text-3xl font-black text-purple-900">{totalOTHours}</p></div>
-                              <div className="bg-orange-50 p-5 rounded-3xl border border-orange-100"><p className="text-[10px] uppercase font-black text-orange-500 mb-1 tracking-wider">Base Pay</p><p className="text-2xl md:text-3xl font-black text-orange-900">{formatCurrency(totalBase)}</p></div>
-                              <div className="bg-gray-900 p-5 rounded-3xl border border-gray-800 shadow-xl"><p className="text-[10px] uppercase font-black text-emerald-400 mb-1 tracking-wider">Total Payout</p><p className="text-2xl md:text-3xl font-black text-white">{formatCurrency(totalBase + totalOT)}</p></div>
-                            </div>
-
-                            <div className="overflow-hidden border border-gray-100 rounded-3xl shadow-sm">
-                              <div className="bg-gray-50 border-b border-gray-100 p-4 font-black text-gray-600 text-xs uppercase tracking-wider">Daily Breakdown</div>
-
-                              {/* DESKTOP VIEW: WIDE TABLE */}
-                              <div className="hidden md:block overflow-x-auto custom-scrollbar">
-                                <table className="w-full text-sm text-left bg-white">
-                                  <thead className="bg-white font-black text-gray-400 uppercase text-[10px] tracking-wider border-b border-gray-50">
-                                    <tr><th className="px-6 py-4">Date</th><th className="px-6 py-4">Site</th><th className="px-6 py-4 text-center">Status</th><th className="px-6 py-4 text-center">OT Hrs</th><th className="px-6 py-4 text-right">Daily Total</th></tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-gray-50">
-                                    {filteredLogs.map((log, i) => (
-                                      <tr key={i} className="hover:bg-gray-50/80 transition-colors">
-                                        <td className="px-6 py-4 font-black text-gray-900">{new Date(log.date).toLocaleDateString('en-GB')}</td>
-                                        <td className="px-6 py-4 font-bold text-gray-700">{log.site} <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded ml-2">{log.contractor}</span></td>
-                                        <td className="px-6 py-4 text-center"><span className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider ${log.status === 'present' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'}`}>{log.status}</span></td>
-                                        <td className="px-6 py-4 text-center font-black text-purple-600">{log.otHours || '-'}</td>
-                                        <td className="px-6 py-4 text-right font-black text-emerald-600">{formatCurrency((log.baseCost || 0) + (log.otCost || 0))}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-
-                              {/* MOBILE VIEW: STACKED CARDS */}
-                              <div className="block md:hidden bg-white divide-y divide-gray-50">
-                                {filteredLogs.map((log, i) => (
-                                  <div key={i} className="p-4 space-y-3">
-                                    <div className="flex justify-between items-start">
-                                      <div>
-                                        <p className="font-black text-gray-900 text-base">{new Date(log.date).toLocaleDateString('en-GB')}</p>
-                                        <p className="font-bold text-gray-500 text-xs mt-0.5">{log.site}</p>
-                                      </div>
-                                      <span className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider ${log.status === 'present' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'}`}>{log.status}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
-                                      <div className="text-center">
-                                        <p className="text-[9px] uppercase font-bold text-gray-400 tracking-wider">OT Hours</p>
-                                        <p className="font-black text-purple-600 text-sm mt-0.5">{log.otHours || '0'}</p>
-                                      </div>
-                                      <div className="text-right">
-                                        <p className="text-[9px] uppercase font-bold text-gray-400 tracking-wider">Daily Pay</p>
-                                        <p className="font-black text-emerald-600 text-lg mt-0.5">{formatCurrency((log.baseCost || 0) + (log.otCost || 0))}</p>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  ) : (
-                    <div className="text-center py-16 px-4 bg-gray-50/50 rounded-[3rem] border-2 border-gray-100 border-dashed">
-                      <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-                      <p className="text-lg font-black text-gray-800">Type a worker's name to generate their ledger</p>
-                      <p className="text-sm font-bold text-gray-400 mt-2">Requires at least 2 letters to search securely.</p>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
           ) : (
             <div className="max-w-7xl mx-auto space-y-4 md:space-y-6 p-2 md:p-8 pt-4 md:pt-8 pb-12">
               <div className="bg-white p-4 md:p-5 rounded-[2rem] shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div className="flex flex-col md:flex-row gap-2 md:gap-4 items-start md:items-center w-full md:w-auto">
-                  <div className="bg-blue-600 p-2.5 rounded-xl text-white shadow-sm cursor-pointer shrink-0" onClick={() => { setSiteData([]); setDayData([]); }}>
-                    <LayoutGrid className="w-5 h-5 md:w-6 md:h-6" />
-                  </div>
                   <div className="min-w-0 flex-1">
-                    <h1 className="text-xl md:text-2xl font-black tracking-tight text-gray-900 leading-none truncate" title={sheetName}>{sheetName}</h1>
+                    <h1 className="text-xl md:text-2xl font-black tracking-tight text-gray-900 leading-none truncate">{sheetName}</h1>
                     <p className="text-[10px] md:text-xs font-bold uppercase tracking-wider text-emerald-500 mt-1 flex items-center gap-1"><IndianRupee className="w-3 h-3" /> Financial Engine Active</p>
-                  </div>
-                  <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 px-3 py-2 rounded-xl shadow-inner mt-2 md:mt-0">
-                    <Calendar className="w-4 h-4 text-gray-400" />
-                    <input type="month" value={sheetMonth} onChange={(e) => setSheetMonth(e.target.value)} className="bg-transparent text-sm font-black text-gray-700 outline-none cursor-pointer uppercase" />
                   </div>
                 </div>
 
                 <div className="flex w-full md:w-auto gap-2 md:gap-3">
-                  <button onClick={saveToDatabase} disabled={hasSavedCurrent || isSaving} className={`flex-1 justify-center px-4 md:px-6 py-3 rounded-xl font-black text-sm flex items-center gap-2 transition-all shadow-sm ${hasSavedCurrent ? 'bg-gray-100 text-gray-500 cursor-not-allowed border border-gray-200' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
+                  <button onClick={saveToDatabase} disabled={hasSavedCurrent || isSaving || !sheetContractor || sheetContractor === "Unknown"} className={`flex-1 justify-center px-4 md:px-6 py-3 rounded-xl font-black text-sm flex items-center gap-2 transition-all shadow-sm ${hasSavedCurrent || !sheetContractor || sheetContractor === "Unknown" ? 'bg-gray-100 text-gray-500 cursor-not-allowed border border-gray-200' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
                     {hasSavedCurrent ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
                     {hasSavedCurrent ? "Saved" : isSaving ? "Saving..." : "Save Insights"}
                   </button>
-                  <button onClick={() => { setSiteData([]); setDayData([]); fileInputRef.current?.click(); }} className="flex-1 justify-center bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 md:px-5 py-3 rounded-xl font-black text-sm flex items-center gap-2 transition-all">
+                  <button onClick={() => { goHome(); fileInputRef.current?.click(); }} className="flex-1 justify-center bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 md:px-5 py-3 rounded-xl font-black text-sm flex items-center gap-2 transition-all">
                     <Upload className="w-4 h-4" /> Upload
                   </button>
                 </div>
               </div>
 
-              {/* NEW DRILL-DOWN LOGIC: The 3 Contractor Boxes */}
+              {/* UNIFIED BUCKET ERROR HANDLER */}
+              {!sheetContractor || sheetContractor === "Unknown" ? (
+                <div className="bg-red-50 border border-red-200 rounded-[2rem] p-8 text-center mt-6">
+                  <h3 className="text-xl font-black text-red-700 mb-2">Unknown Contractor</h3>
+                  <p className="text-sm font-bold text-red-500">The uploaded file name must include the contractor's name (e.g., "Arvind May 1-15.xlsx") to save it to the bucket.</p>
+                </div>
+              ) : null}
+
+              {/* NEW DRILL-DOWN LOGIC: The Contractor Boxes */}
               {!selectedRecordContractor ? (
                 <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-100 p-8 md:p-12 text-center max-w-4xl mx-auto mt-8">
                   <h2 className="text-2xl md:text-3xl font-black text-gray-900 mb-2">Select Contractor Team</h2>
                   <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-10">Data Period: {sheetName}</p>
-
+                  
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
-                    {PREDEFINED_CONTRACTORS.map(c => {
+                    {dynamicContractors.map(c => {
                       const hasData = workerData.some(w => w.contractor === c);
                       return (
                         <div key={c} onClick={() => hasData && setSelectedRecordContractor(c)} className={`group relative p-6 md:p-8 rounded-[2rem] border-2 transition-all ${hasData ? 'bg-white hover:bg-blue-50/50 border-gray-100 hover:border-blue-200 cursor-pointer shadow-sm hover:shadow-xl' : 'bg-gray-50 border-dashed border-gray-200 opacity-50 cursor-not-allowed'}`}>
@@ -1303,7 +1096,7 @@ export default function App() {
                 </div>
               ) : (
                 <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden mt-6">
-                  {/* Back Button added to header */}
+                  {/* Internal Controls for the selected team */}
                   <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center border-b border-gray-100 bg-gray-50/50 p-2 md:p-4 gap-3">
                     <div className="flex items-center gap-3 w-full lg:w-auto">
                       <button onClick={() => setSelectedRecordContractor(null)} className="p-2.5 bg-white border border-gray-200 rounded-xl text-gray-500 hover:text-blue-600 hover:border-blue-200 shadow-sm transition-all" title="Back to Teams">
@@ -1385,15 +1178,26 @@ export default function App() {
                       </tbody>
                       {filteredData.length > 0 && (
                         <tfoot className="bg-gray-100/90 sticky bottom-0 z-10 backdrop-blur-md shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] border-t-2 border-gray-200">
-                          <tr>
-                            <td colSpan={activeTab === 'day' || activeTab === 'worker' ? 2 : 1} className="px-4 lg:px-6 py-4 text-right font-black text-gray-900 uppercase">Grand Total:</td>
-                            <td className="px-4 lg:px-6 py-4 font-black text-blue-900 text-base">{totals.masonReg}</td>
-                            <td className="px-4 lg:px-6 py-4 font-black text-purple-900 text-base">{totals.halfMasonReg}</td>
-                            <td className="px-4 lg:px-6 py-4 font-black text-orange-900 text-base">{totals.helperReg}</td>
-                            <td className="px-4 lg:px-6 py-4 font-bold text-emerald-700">{formatCurrency(totals.totalBaseCost)}</td>
-                            <td className="px-4 lg:px-6 py-4 font-bold text-emerald-700">{formatCurrency(totals.totalOTCost)}</td>
-                            <td className="px-4 lg:px-6 py-4 font-black text-gray-900 text-lg bg-gray-200/50">{formatCurrency(totals.totalBaseCost + totals.totalOTCost)}</td>
-                          </tr>
+                          {activeTab === 'worker' ? (
+                            <tr>
+                              <td colSpan="2" className="px-4 lg:px-6 py-4 text-right font-black text-gray-900 uppercase">Grand Total:</td>
+                              <td className="px-4 lg:px-6 py-4 font-black text-blue-900 text-base">{totals.masonReg + totals.halfMasonReg + totals.helperReg}</td>
+                              <td className="px-4 lg:px-6 py-4 font-black text-purple-900 text-base">{totals.masonOT + totals.halfMasonOT + totals.helperOT} h</td>
+                              <td className="px-4 lg:px-6 py-4 font-bold text-emerald-700">{formatCurrency(totals.totalBaseCost)}</td>
+                              <td className="px-4 lg:px-6 py-4 font-bold text-emerald-700">{formatCurrency(totals.totalOTCost)}</td>
+                              <td className="px-4 lg:px-6 py-4 font-black text-gray-900 text-lg bg-gray-200/50">{formatCurrency(totals.totalBaseCost + totals.totalOTCost)}</td>
+                            </tr>
+                          ) : (
+                            <tr>
+                              <td colSpan={activeTab === 'day' ? 2 : 1} className="px-4 lg:px-6 py-4 text-right font-black text-gray-900 uppercase">Grand Total:</td>
+                              <td className="px-4 lg:px-6 py-4 font-black text-blue-900 text-base">{totals.masonReg} <span className="text-xs text-gray-500">({totals.masonOT}h)</span></td>
+                              <td className="px-4 lg:px-6 py-4 font-black text-purple-900 text-base">{totals.halfMasonReg} <span className="text-xs text-gray-500">({totals.halfMasonOT}h)</span></td>
+                              <td className="px-4 lg:px-6 py-4 font-black text-orange-900 text-base">{totals.helperReg} <span className="text-xs text-gray-500">({totals.helperOT}h)</span></td>
+                              <td className="px-4 lg:px-6 py-4 font-bold text-emerald-700">{formatCurrency(totals.totalBaseCost)}</td>
+                              <td className="px-4 lg:px-6 py-4 font-bold text-emerald-700">{formatCurrency(totals.totalOTCost)}</td>
+                              <td className="px-4 lg:px-6 py-4 font-black text-gray-900 text-lg bg-gray-200/50">{formatCurrency(totals.totalBaseCost + totals.totalOTCost)}</td>
+                            </tr>
+                          )}
                         </tfoot>
                       )}
                     </table>
@@ -1404,32 +1208,50 @@ export default function App() {
                         filteredData.map((row, idx) => (
                           <div key={idx} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 space-y-3">
                             <div className="flex justify-between items-center border-b border-gray-50 pb-2">
-                              <span className="text-sm font-black text-gray-800 bg-gray-100 px-3 py-1.5 rounded-lg truncate max-w-[200px]">Site: {row.site}</span>
+                              <span className="text-sm font-black text-gray-800 bg-gray-100 px-3 py-1.5 rounded-lg truncate max-w-[200px]">{activeTab === 'worker' ? `Name: ${row.worker}` : `Site: ${row.site}`}</span>
                               {activeTab === 'day' && <span className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg whitespace-nowrap">Day {row.day}</span>}
                             </div>
-                            <div className="grid grid-cols-3 gap-2 text-xs">
-                              <div className="bg-blue-50/50 p-2.5 rounded-xl border border-blue-100"><p className="text-blue-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">Mason</p><p className="text-base font-black text-blue-900">{row.masonReg} <span className="text-[10px] font-medium text-blue-400">({row.masonOT}h)</span></p></div>
-                              <div className="bg-purple-50/50 p-2.5 rounded-xl border border-purple-100"><p className="text-purple-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">H. Mason</p><p className="text-base font-black text-purple-900">{row.halfMasonReg} <span className="text-[10px] font-medium text-purple-400">({row.halfMasonOT}h)</span></p></div>
-                              <div className="bg-orange-50/50 p-2.5 rounded-xl border border-orange-100"><p className="text-orange-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">Helper</p><p className="text-base font-black text-orange-900">{row.helperReg} <span className="text-[10px] font-medium text-orange-400">({row.helperOT}h)</span></p></div>
-                            </div>
+                            
+                            {activeTab === 'worker' ? (
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div className="bg-blue-50/50 p-2.5 rounded-xl border border-blue-100"><p className="text-blue-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">Total Days</p><p className="text-base font-black text-blue-900">{row.regDays}</p></div>
+                                <div className="bg-purple-50/50 p-2.5 rounded-xl border border-purple-100"><p className="text-purple-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">OT Hours</p><p className="text-base font-black text-purple-900">{row.otHours}</p></div>
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-3 gap-2 text-xs">
+                                <div className="bg-blue-50/50 p-2.5 rounded-xl border border-blue-100"><p className="text-blue-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">Mason</p><p className="text-base font-black text-blue-900">{row.masonReg} <span className="text-[10px] font-medium text-blue-400">({row.masonOT}h)</span></p></div>
+                                <div className="bg-purple-50/50 p-2.5 rounded-xl border border-purple-100"><p className="text-purple-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">H. Mason</p><p className="text-base font-black text-purple-900">{row.halfMasonReg} <span className="text-[10px] font-medium text-purple-400">({row.halfMasonOT}h)</span></p></div>
+                                <div className="bg-orange-50/50 p-2.5 rounded-xl border border-orange-100"><p className="text-orange-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">Helper</p><p className="text-base font-black text-orange-900">{row.helperReg} <span className="text-[10px] font-medium text-orange-400">({row.helperOT}h)</span></p></div>
+                              </div>
+                            )}
+                            
                             <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100 flex justify-between items-center">
-                              <p className="text-emerald-700 font-bold text-[10px] uppercase tracking-wider">Total Site Cost</p>
+                              <p className="text-emerald-700 font-bold text-[10px] uppercase tracking-wider">{activeTab === 'worker' ? 'Total Payout' : 'Total Site Cost'}</p>
                               <p className="text-emerald-900 font-black text-lg">{formatCurrency((row.totalBaseCost || 0) + (row.totalOTCost || 0))}</p>
                             </div>
                           </div>
                         ))
                       ) : (
-                        <div className="text-center py-12 text-gray-500 font-medium bg-white rounded-2xl border border-gray-100">No sites found</div>
+                        <div className="text-center py-12 text-gray-500 font-medium bg-white rounded-2xl border border-gray-100">No records found</div>
                       )}
 
                       {filteredData.length > 0 && (
                         <div className="bg-gray-900 p-5 rounded-[2rem] shadow-xl mt-4 border border-gray-800">
                           <h3 className="text-white font-black text-center text-sm mb-4 tracking-wider">SHEET TOTALS</h3>
-                          <div className="grid grid-cols-3 gap-2 text-xs mb-3">
-                            <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Mason</p><p className="text-base font-black text-white">{totals.masonReg}</p></div>
-                            <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-purple-400 font-bold mb-0.5 uppercase text-[9px]">Total HM</p><p className="text-base font-black text-purple-200">{totals.halfMasonReg}</p></div>
-                            <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Helper</p><p className="text-base font-black text-white">{totals.helperReg}</p></div>
-                          </div>
+                          
+                          {activeTab === 'worker' ? (
+                            <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                              <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Days</p><p className="text-base font-black text-white">{totals.masonReg + totals.halfMasonReg + totals.helperReg}</p></div>
+                              <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-purple-400 font-bold mb-0.5 uppercase text-[9px]">Total OT Hours</p><p className="text-base font-black text-purple-200">{totals.masonOT + totals.halfMasonOT + totals.helperOT} h</p></div>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-3 gap-2 text-xs mb-3">
+                              <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Mason</p><p className="text-base font-black text-white">{totals.masonReg} <span className="text-[10px] text-gray-400">({totals.masonOT}h)</span></p></div>
+                              <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-purple-400 font-bold mb-0.5 uppercase text-[9px]">Total HM</p><p className="text-base font-black text-purple-200">{totals.halfMasonReg} <span className="text-[10px] text-gray-400">({totals.halfMasonOT}h)</span></p></div>
+                              <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Helper</p><p className="text-base font-black text-white">{totals.helperReg} <span className="text-[10px] text-gray-400">({totals.helperOT}h)</span></p></div>
+                            </div>
+                          )}
+                          
                           <div className="bg-emerald-600 p-4 rounded-2xl border border-emerald-500 text-center">
                             <p className="text-emerald-100 font-bold mb-1 uppercase text-[10px] tracking-wider">Grand Financial Total</p>
                             <p className="text-2xl font-black text-white">{formatCurrency(totals.totalBaseCost + totals.totalOTCost)}</p>
