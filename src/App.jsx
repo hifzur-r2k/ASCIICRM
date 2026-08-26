@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
   Upload, Download, FileText, UploadCloud, LayoutGrid, Search,
@@ -75,11 +75,11 @@ export default function App() {
   const [workerSearch, setWorkerSearch] = useState("");
   const [supAttendance, setSupAttendance] = useState({});
   const [isSubmittingLog, setIsSubmittingLog] = useState(false);
-
+  
   // Custom Dropdown UI States
   const [isSiteDropdownOpen, setIsSiteDropdownOpen] = useState(false);
   const [isTeamDropdownOpen, setIsTeamDropdownOpen] = useState(false);
-  const [siteSearchQuery, setSiteSearchQuery] = useState(""); // NEW: Site Search State
+  const [siteSearchQuery, setSiteSearchQuery] = useState("");
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -351,7 +351,6 @@ export default function App() {
     reader.readAsBinaryString(file);
   };
 
-  // SMART MERGE FOR EXCEL UPLOADS
   const saveToDatabase = async () => {
     if (hasSavedCurrent || !sheetMonth || !sheetContractor) return;
     setIsSaving(true);
@@ -493,6 +492,8 @@ export default function App() {
   };
   const multiSiteData = getMultiSiteAnalytics();
 
+  const recordContractors = Array.from(new Set([...dynamicContractors, ...workerData.map(w => w.contractor)])).filter(Boolean);
+
   const activeData = activeTab === 'site' ? siteData : activeTab === 'day' ? dayData : workerData;
   const contractorFilteredData = selectedRecordContractor ? activeData.filter(row => row.contractor === selectedRecordContractor) : activeData;
   const filteredData = contractorFilteredData.filter(row => row.site ? row.site.toLowerCase().includes(searchQuery.toLowerCase()) : row.worker.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -512,28 +513,50 @@ export default function App() {
     return acc;
   }, { masonReg: 0, masonOT: 0, halfMasonReg: 0, halfMasonOT: 0, helperReg: 0, helperOT: 0, totalBaseCost: 0, totalOTCost: 0 });
 
+  // --- WORKER GROUPING LOGIC ---
+  const masonsData = filteredData.filter(r => r.type === 'Mason');
+  const halfMasonsData = filteredData.filter(r => r.type === 'HalfMason');
+  const helpersData = filteredData.filter(r => r.type === 'Helper');
+
+  const calcSubtotals = (data) => data.reduce((acc, row) => ({
+    days: acc.days + (row.regDays || 0),
+    ot: acc.ot + (row.otHours || 0),
+    base: acc.base + (row.totalBaseCost || 0),
+    otPay: acc.otPay + (row.totalOTCost || 0)
+  }), { days: 0, ot: 0, base: 0, otPay: 0 });
+
   // --- PROFESSIONAL EXPORT LOGIC ---
   const exportToExcel = () => {
     if (filteredData.length === 0) return alert("No data to export.");
 
-    // Create a beautiful, spaced-out header for the Excel file
     let aoa = [
       ["CRM_FIX - FINANCIAL & ATTENDANCE REPORT"],
       [`Period: ${sheetName}`],
       [`Contractor: ${selectedRecordContractor}`],
       [`View: ${activeTab.toUpperCase()}-WISE`],
-      [] // Blank row for spacing
+      [] 
     ];
 
     if (activeTab === 'worker') {
       aoa.push(["Worker Name", "Category", "Total Days", "Total OT (Hrs)", "Base Pay (Rs)", "OT Pay (Rs)", "Total Payout (Rs)"]);
-      filteredData.forEach(row => {
-        aoa.push([row.worker, row.type, row.regDays, row.otHours, row.totalBaseCost, row.totalOTCost, row.totalBaseCost + row.totalOTCost]);
-      });
-      aoa.push([]); // Blank row before totals
+      
+      const addCategoryToAOA = (data, catName) => {
+        if (data.length === 0) return;
+        data.forEach(row => {
+          aoa.push([row.worker, row.type, row.regDays, row.otHours, row.totalBaseCost, row.totalOTCost, row.totalBaseCost + row.totalOTCost]);
+        });
+        const sub = calcSubtotals(data);
+        aoa.push([`${catName.toUpperCase()} SUBTOTAL`, "", sub.days, sub.ot, sub.base, sub.otPay, sub.base + sub.otPay]);
+        aoa.push([]); // Blank row
+      };
+
+      addCategoryToAOA(masonsData, "Mason");
+      addCategoryToAOA(halfMasonsData, "Half Mason");
+      addCategoryToAOA(helpersData, "Helper");
+
       aoa.push(["GRAND TOTAL", "", totals.masonReg + totals.halfMasonReg + totals.helperReg, totals.masonOT + totals.halfMasonOT + totals.helperOT, totals.totalBaseCost, totals.totalOTCost, totals.totalBaseCost + totals.totalOTCost]);
     } else {
-      const headers = activeTab === 'day'
+      const headers = activeTab === 'day' 
         ? ["Day", "Site Code", "Mason Days", "Mason OT", "HM Days", "HM OT", "Helper Days", "Helper OT", "Base Cost (Rs)", "OT Cost (Rs)", "Total Site Cost (Rs)"]
         : ["Site Code", "Mason Days", "Mason OT", "HM Days", "HM OT", "Helper Days", "Helper OT", "Base Cost (Rs)", "OT Cost (Rs)", "Total Site Cost (Rs)"];
       aoa.push(headers);
@@ -542,21 +565,17 @@ export default function App() {
         r.push(row.site, row.masonReg, row.masonOT, row.halfMasonReg, row.halfMasonOT, row.helperReg, row.helperOT, row.totalBaseCost, row.totalOTCost, row.totalBaseCost + row.totalOTCost);
         aoa.push(r);
       });
-      aoa.push([]); // Blank row before totals
+      aoa.push([]); 
       const ft = activeTab === 'day' ? ["GRAND TOTAL", ""] : ["GRAND TOTAL"];
       ft.push(totals.masonReg, totals.masonOT, totals.halfMasonReg, totals.halfMasonOT, totals.helperReg, totals.helperOT, totals.totalBaseCost, totals.totalOTCost, totals.totalBaseCost + totals.totalOTCost);
       aoa.push(ft);
     }
 
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-
-    // Make the columns nice and wide
     ws['!cols'] = [
-      { wch: 18 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
-      { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 20 }
+      { wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, 
+      { wch: 15 }, { wch: 20 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 20 }
     ];
-
-    // Merge the top header rows so the title looks like a real corporate header
     ws['!merges'] = [
       { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
       { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } },
@@ -571,16 +590,13 @@ export default function App() {
 
   const exportToPDF = () => {
     if (filteredData.length === 0) return alert("No data to export.");
-
+    
     try {
-      // Set PDF to landscape ('l') to fit all columns without squishing
       const doc = new jsPDF('l');
-
-      // Professional PDF Header
       doc.setFontSize(18);
-      doc.setTextColor(15, 23, 42);
+      doc.setTextColor(15, 23, 42); 
       doc.text("CRM_FIX Financial Report", 14, 22);
-
+      
       doc.setFontSize(10);
       doc.setTextColor(100, 116, 139);
       doc.text(`Period: ${sheetName}   |   Contractor: ${selectedRecordContractor}   |   View: ${activeTab.toUpperCase()}-WISE`, 14, 30);
@@ -589,18 +605,37 @@ export default function App() {
       let body = [];
       let foot = [];
 
-      // We remove the Indian Rupee symbol (₹) here and use pure numbers because ₹ crashes basic PDF fonts
       const formatNum = (num) => Number(num).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
       if (activeTab === 'worker') {
         head = [["Worker Name", "Category", "Total Days", "OT (Hrs)", "Base Pay (Rs)", "OT Pay (Rs)", "Total Payout (Rs)"]];
-        body = filteredData.map(row => [row.worker, row.type, row.regDays, row.otHours, formatNum(row.totalBaseCost), formatNum(row.totalOTCost), formatNum(row.totalBaseCost + row.totalOTCost)]);
-        foot = [["GRAND TOTAL", "", totals.masonReg + totals.halfMasonReg + totals.helperReg, totals.masonOT + totals.halfMasonOT + totals.helperOT, formatNum(totals.totalBaseCost), formatNum(totals.totalOTCost), formatNum(totals.totalBaseCost + totals.totalOTCost)]];
+        
+        const addCategoryToPDF = (data, catName) => {
+          if (data.length === 0) return;
+          data.forEach(row => {
+            body.push([row.worker, row.type, row.regDays, row.otHours, formatNum(row.totalBaseCost), formatNum(row.totalOTCost), formatNum(row.totalBaseCost + row.totalOTCost)]);
+          });
+          const sub = calcSubtotals(data);
+          body.push([
+            { content: `${catName.toUpperCase()} SUBTOTAL`, colSpan: 2, styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } },
+            { content: sub.days.toString(), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } },
+            { content: sub.ot.toString(), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } },
+            { content: formatNum(sub.base), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } },
+            { content: formatNum(sub.otPay), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } },
+            { content: formatNum(sub.base + sub.otPay), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }
+          ]);
+        };
+
+        addCategoryToPDF(masonsData, "Mason");
+        addCategoryToPDF(halfMasonsData, "Half Mason");
+        addCategoryToPDF(helpersData, "Helper");
+
+        foot = [["GRAND TOTAL", "", (totals.masonReg + totals.halfMasonReg + totals.helperReg).toString(), (totals.masonOT + totals.halfMasonOT + totals.helperOT).toString(), formatNum(totals.totalBaseCost), formatNum(totals.totalOTCost), formatNum(totals.totalBaseCost + totals.totalOTCost)]];
       } else {
-        head = activeTab === 'day'
+        head = activeTab === 'day' 
           ? [["Day", "Site", "Mason", "M. OT", "HM", "HM OT", "Helper", "H. OT", "Base Cost", "OT Cost", "Total Cost"]]
           : [["Site", "Mason", "M. OT", "HM", "HM OT", "Helper", "H. OT", "Base Cost", "OT Cost", "Total Cost"]];
-
+        
         body = filteredData.map(row => {
           const r = activeTab === 'day' ? [row.day] : [];
           r.push(row.site, row.masonReg, row.masonOT, row.halfMasonReg, row.halfMasonOT, row.helperReg, row.helperOT, formatNum(row.totalBaseCost || 0), formatNum(row.totalOTCost || 0), formatNum((row.totalBaseCost || 0) + (row.totalOTCost || 0)));
@@ -612,15 +647,15 @@ export default function App() {
         foot = [ft];
       }
 
-      // Generate Table
       autoTable(doc, {
         startY: 35,
         head: head,
         body: body,
         foot: foot,
+        showFoot: 'lastPage',
         theme: 'striped',
         headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
-        footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold' },
+        footStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
         styles: { fontSize: 8, cellPadding: 3 },
       });
 
@@ -710,6 +745,59 @@ export default function App() {
     setIsSubmittingLog(false);
   };
 
+  const renderDesktopWorkerRow = (row, idx) => (
+    <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50/80 bg-white transition-colors">
+      <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-bold text-gray-900">{row.worker}</td>
+      <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-bold text-gray-700">{row.type}</td>
+      <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-medium text-gray-900">{row.regDays}</td>
+      <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-medium text-purple-600">{row.otHours}</td>
+      <td className="px-4 lg:px-6 py-4 border-r border-gray-50 text-emerald-700 font-medium">{formatCurrency(row.totalBaseCost || 0)}</td>
+      <td className="px-4 lg:px-6 py-4 border-r border-gray-100 text-emerald-700 font-medium">{formatCurrency(row.totalOTCost || 0)}</td>
+      <td className="px-4 lg:px-6 py-4 text-gray-900 font-black bg-gray-50/50">{formatCurrency((row.totalBaseCost || 0) + (row.totalOTCost || 0))}</td>
+    </tr>
+  );
+
+  const renderWorkerSubtotal = (data, label, colorClass) => {
+    if (data.length === 0) return null;
+    const sub = calcSubtotals(data);
+    return (
+      <tr className={`${colorClass} border-b-2 border-gray-200`}>
+        <td colSpan="2" className="px-4 lg:px-6 py-3 text-right font-black uppercase text-[10px] tracking-widest">{label} SUBTOTAL:</td>
+        <td className="px-4 lg:px-6 py-3 font-black text-sm">{sub.days}</td>
+        <td className="px-4 lg:px-6 py-3 font-black text-sm">{sub.ot} h</td>
+        <td className="px-4 lg:px-6 py-3 font-black text-sm">{formatCurrency(sub.base)}</td>
+        <td className="px-4 lg:px-6 py-3 font-black text-sm">{formatCurrency(sub.otPay)}</td>
+        <td className="px-4 lg:px-6 py-3 font-black text-sm bg-black/5">{formatCurrency(sub.base + sub.otPay)}</td>
+      </tr>
+    );
+  };
+
+  const renderMobileWorkerCard = (row, idx) => (
+    <div key={idx} className="flex justify-between items-center p-3 hover:bg-gray-50 transition-colors border-b border-gray-50">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-black text-gray-900 truncate uppercase">{row.worker}</p>
+        <p className="text-[10px] text-gray-400 font-bold mt-0.5">
+          {row.regDays} Days <span className="text-blue-500 font-black">+{row.otHours}h OT</span>
+        </p>
+      </div>
+      <div className="text-right shrink-0 ml-3">
+        <p className="text-[8px] uppercase font-bold text-emerald-600/70 mb-0.5">Total Payout</p>
+        <p className="text-sm font-black text-emerald-700">{formatCurrency((row.totalBaseCost || 0) + (row.totalOTCost || 0))}</p>
+      </div>
+    </div>
+  );
+
+  const renderMobileSubtotal = (data, label, colorClass) => {
+    if (data.length === 0) return null;
+    const sub = calcSubtotals(data);
+    return (
+      <div className={`${colorClass} p-3 flex justify-between items-center shadow-inner`}>
+        <div className="text-[9px] font-black uppercase tracking-widest">{label} SUBTOTAL<br/><span className="opacity-70">{sub.days} Days | {sub.ot}h OT</span></div>
+        <div className="text-sm font-black">{formatCurrency(sub.base + sub.otPay)}</div>
+      </div>
+    );
+  };
+
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-[#f8fafc] text-gray-500 font-bold">Initializing Secure Environment...</div>;
   if (!user) {
     return (
@@ -768,7 +856,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* CUSTOM SITE DROPDOWN WITH SEARCH */}
               <div className="space-y-1.5 relative z-50">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Select Site</label>
                 <div className="relative">
@@ -783,22 +870,19 @@ export default function App() {
                     </div>
                   </div>
                   <div className={`absolute top-full left-0 mt-2 w-full bg-white border border-gray-100 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] z-50 overflow-hidden transition-all duration-200 origin-top ${isSiteDropdownOpen ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0 pointer-events-none'}`}>
-
-                    {/* Sticky Search Bar */}
                     <div className="p-2 border-b border-gray-50 bg-gray-50/50">
                       <div className="relative">
                         <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input
-                          type="text"
-                          placeholder="Search site..."
-                          value={siteSearchQuery}
+                        <input 
+                          type="text" 
+                          placeholder="Search site..." 
+                          value={siteSearchQuery} 
                           onChange={(e) => setSiteSearchQuery(e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()} 
                           className="w-full pl-8 pr-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                         />
                       </div>
                     </div>
-
                     <div className="max-h-52 overflow-y-auto custom-scrollbar py-1">
                       {masterSites.filter(site => site.toLowerCase().includes(siteSearchQuery.toLowerCase())).map(site => (
                         <div key={site} onClick={() => { setSupSite(site); setIsSiteDropdownOpen(false); setSiteSearchQuery(""); }} className={`px-4 py-2.5 text-sm font-black cursor-pointer transition-colors ${supSite === site ? 'bg-emerald-50 text-emerald-700' : 'text-gray-600 hover:bg-gray-50 hover:text-blue-600'}`}>
@@ -811,7 +895,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* CUSTOM TEAM DROPDOWN */}
               <div className="space-y-1.5 relative z-40">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Contractor Team</label>
                 <div className="relative">
@@ -888,7 +971,7 @@ export default function App() {
                             <div className="flex items-center gap-1.5 shrink-0">
                               <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200/50">
                                 <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isPresent ? 'bg-purple-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
-                                <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
                                 <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
                               </div>
                               {(isPresent || isHalf) && <input type="number" placeholder="OT" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-12 sm:w-16 h-7 sm:h-8 bg-gray-50 border border-gray-200 px-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-purple-500/20 text-center" />}
@@ -950,7 +1033,6 @@ export default function App() {
                 <p className="text-xs md:text-base font-bold text-gray-400 uppercase tracking-widest">Financial & Attendance Engine</p>
               </div>
 
-              {/* COMPACT HOME TABS FOR MOBILE */}
               <div className="flex justify-center mb-8 px-2">
                 <div className="bg-gray-100 p-1.5 rounded-[1.25rem] sm:rounded-full flex w-full sm:w-auto shadow-inner overflow-hidden">
                   <button onClick={() => setDashboardTab('upload')} className={`flex-1 sm:flex-none px-2 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-full font-bold text-[10px] sm:text-sm transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2.5 ${dashboardTab === 'upload' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
@@ -1227,14 +1309,12 @@ export default function App() {
                 </div>
               </div>
 
-              {/* NEW DRILL-DOWN LOGIC: The Contractor Boxes */}
               {!selectedRecordContractor ? (
                 <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-100 p-8 md:p-12 text-center max-w-4xl mx-auto mt-8">
                   <h2 className="text-2xl md:text-3xl font-black text-gray-900 mb-2">Select Contractor Team</h2>
                   <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-10">Data Period: {sheetName}</p>
-
+                  
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
-                    {/* Maps over all contractors that have actual data saved inside this specific bucket */}
                     {Array.from(new Set([...dynamicContractors, ...workerData.map(w => w.contractor)])).filter(Boolean).map(c => {
                       const hasData = workerData.some(w => w.contractor === c);
                       return (
@@ -1251,7 +1331,6 @@ export default function App() {
                 </div>
               ) : (
                 <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden mt-6">
-                  {/* Internal Controls for the selected team */}
                   <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center border-b border-gray-100 bg-gray-50/50 p-2 md:p-4 gap-3">
                     <div className="flex items-center gap-3 w-full lg:w-auto">
                       <button onClick={() => setSelectedRecordContractor(null)} className="p-2.5 bg-white border border-gray-200 rounded-xl text-gray-500 hover:text-blue-600 hover:border-blue-200 shadow-sm transition-all" title="Back to Teams">
@@ -1302,17 +1381,26 @@ export default function App() {
                       <tbody>
                         {filteredData.length > 0 ? (
                           activeTab === 'worker' ? (
-                            filteredData.map((row, idx) => (
-                              <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50/80 bg-white transition-colors">
-                                <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-bold text-gray-900">{row.worker}</td>
-                                <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-bold text-gray-700">{row.type}</td>
-                                <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-medium text-gray-900">{row.regDays}</td>
-                                <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-medium text-purple-600">{row.otHours}</td>
-                                <td className="px-4 lg:px-6 py-4 border-r border-gray-50 text-emerald-700 font-medium">{formatCurrency(row.totalBaseCost || 0)}</td>
-                                <td className="px-4 lg:px-6 py-4 border-r border-gray-100 text-emerald-700 font-medium">{formatCurrency(row.totalOTCost || 0)}</td>
-                                <td className="px-4 lg:px-6 py-4 text-gray-900 font-black bg-gray-50/50">{formatCurrency((row.totalBaseCost || 0) + (row.totalOTCost || 0))}</td>
-                              </tr>
-                            ))
+                            <>
+                              {masonsData.length > 0 && (
+                                <>
+                                  {masonsData.map(renderDesktopWorkerRow)}
+                                  {renderWorkerSubtotal(masonsData, "Mason", "bg-blue-50 text-blue-900")}
+                                </>
+                              )}
+                              {halfMasonsData.length > 0 && (
+                                <>
+                                  {halfMasonsData.map(renderDesktopWorkerRow)}
+                                  {renderWorkerSubtotal(halfMasonsData, "Half Mason", "bg-purple-50 text-purple-900")}
+                                </>
+                              )}
+                              {helpersData.length > 0 && (
+                                <>
+                                  {helpersData.map(renderDesktopWorkerRow)}
+                                  {renderWorkerSubtotal(helpersData, "Helper", "bg-orange-50 text-orange-900")}
+                                </>
+                              )}
+                            </>
                           ) : (
                             filteredData.map((row, idx) => (
                               <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50/80 bg-white transition-colors">
@@ -1357,7 +1445,6 @@ export default function App() {
                       )}
                     </table>
 
-                    {/* MOBILE CARDS (Ultra-Compact for Day/Worker, Standard for Site) */}
                     <div className="block md:hidden">
                       {filteredData.length > 0 ? (
                         activeTab === 'site' ? (
@@ -1379,36 +1466,49 @@ export default function App() {
                               </div>
                             ))}
                           </div>
-                        ) : (
+                        ) : activeTab === 'day' ? (
                           <div className="bg-white border-y border-gray-100 divide-y divide-gray-50 mt-2">
                             {filteredData.map((row, idx) => (
                               <div key={idx} className="flex justify-between items-center p-3 hover:bg-gray-50 transition-colors">
                                 <div className="min-w-0 flex-1">
-                                  {activeTab === 'worker' ? (
-                                    <>
-                                      <p className="text-xs font-black text-gray-900 truncate uppercase">{row.worker}</p>
-                                      <p className="text-[10px] text-gray-400 font-bold mt-0.5">
-                                        {row.regDays} Days <span className="text-blue-500 font-black">+{row.otHours}h OT</span>
-                                      </p>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <div className="flex items-center gap-1.5 mb-0.5">
-                                        <span className="text-[9px] font-black text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded uppercase">Day {row.day}</span>
-                                        <p className="text-xs font-black text-gray-800 truncate">{row.site}</p>
-                                      </div>
-                                      <p className="text-[10px] text-gray-400 font-bold">
-                                        M:{row.masonReg} <span className="text-gray-300 mx-0.5">|</span> HM:{row.halfMasonReg} <span className="text-gray-300 mx-0.5">|</span> H:{row.helperReg}
-                                      </p>
-                                    </>
-                                  )}
+                                  <div className="flex items-center gap-1.5 mb-0.5">
+                                    <span className="text-[9px] font-black text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded uppercase">Day {row.day}</span>
+                                    <p className="text-xs font-black text-gray-800 truncate">{row.site}</p>
+                                  </div>
+                                  <p className="text-[10px] text-gray-400 font-bold">
+                                    M:{row.masonReg} <span className="text-gray-300 mx-0.5">|</span> HM:{row.halfMasonReg} <span className="text-gray-300 mx-0.5">|</span> H:{row.helperReg}
+                                  </p>
                                 </div>
                                 <div className="text-right shrink-0 ml-3">
-                                  <p className="text-[8px] uppercase font-bold text-emerald-600/70 mb-0.5">{activeTab === 'worker' ? 'Total Payout' : 'Daily Cost'}</p>
+                                  <p className="text-[8px] uppercase font-bold text-emerald-600/70 mb-0.5">Daily Cost</p>
                                   <p className="text-sm font-black text-emerald-700">{formatCurrency((row.totalBaseCost || 0) + (row.totalOTCost || 0))}</p>
                                 </div>
                               </div>
                             ))}
+                          </div>
+                        ) : (
+                          <div className="bg-gray-50/50 border-y border-gray-100 mt-2 flex flex-col">
+                            {masonsData.length > 0 && (
+                              <div className="mb-3 bg-white border-y border-gray-100 shadow-sm">
+                                <div className="bg-blue-600 text-white text-[10px] font-black px-3 py-1.5 uppercase tracking-widest">Masons</div>
+                                {masonsData.map(renderMobileWorkerCard)}
+                                {renderMobileSubtotal(masonsData, "Mason", "bg-blue-50 text-blue-900")}
+                              </div>
+                            )}
+                            {halfMasonsData.length > 0 && (
+                              <div className="mb-3 bg-white border-y border-gray-100 shadow-sm">
+                                <div className="bg-purple-600 text-white text-[10px] font-black px-3 py-1.5 uppercase tracking-widest">Half Masons</div>
+                                {halfMasonsData.map(renderMobileWorkerCard)}
+                                {renderMobileSubtotal(halfMasonsData, "Half Mason", "bg-purple-50 text-purple-900")}
+                              </div>
+                            )}
+                            {helpersData.length > 0 && (
+                              <div className="mb-3 bg-white border-y border-gray-100 shadow-sm">
+                                <div className="bg-orange-600 text-white text-[10px] font-black px-3 py-1.5 uppercase tracking-widest">Helpers</div>
+                                {helpersData.map(renderMobileWorkerCard)}
+                                {renderMobileSubtotal(helpersData, "Helper", "bg-orange-50 text-orange-900")}
+                              </div>
+                            )}
                           </div>
                         )
                       ) : (
@@ -1418,7 +1518,7 @@ export default function App() {
                       {filteredData.length > 0 && (
                         <div className="bg-gray-900 p-5 shadow-[0_-4px_15px_-3px_rgba(0,0,0,0.1)]">
                           <h3 className="text-white font-black text-center text-sm mb-4 tracking-wider">SHEET TOTALS</h3>
-
+                          
                           {activeTab === 'worker' ? (
                             <div className="grid grid-cols-2 gap-2 text-xs mb-3">
                               <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Days</p><p className="text-base font-black text-white">{totals.masonReg + totals.halfMasonReg + totals.helperReg}</p></div>
@@ -1431,7 +1531,7 @@ export default function App() {
                               <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Helper</p><p className="text-base font-black text-white">{totals.helperReg} <span className="text-[10px] text-gray-400">({totals.helperOT}h)</span></p></div>
                             </div>
                           )}
-
+                          
                           <div className="bg-emerald-600 p-4 rounded-xl border border-emerald-500 text-center">
                             <p className="text-emerald-100 font-bold mb-1 uppercase text-[10px] tracking-wider">Grand Financial Total</p>
                             <p className="text-2xl font-black text-white">{formatCurrency(totals.totalBaseCost + totals.totalOTCost)}</p>
