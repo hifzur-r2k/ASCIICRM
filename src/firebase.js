@@ -1,10 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { 
-  initializeFirestore, 
-  persistentLocalCache, 
-  persistentMultipleTabManager 
-} from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDllUvbEQs41D4RA2_2FQKMNh_A2cL_G4o",
@@ -15,12 +11,15 @@ const firebaseConfig = {
   appId: "1:501429628278:web:your_app_id"
 };
 
+// 1. Primary App (Handles your main login and offline database)
 const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
+export const auth = getAuth(app);
 
 // Multi-tab persistent offline cache
-const db = initializeFirestore(app, {
+export const db = initializeFirestore(app, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
 });
 
-export { auth, db };
+// 2. Secondary App (Only used silently to create Supervisors without logging you out)
+const secondaryApp = initializeApp(firebaseConfig, "SecondaryApp");
+export const secondaryAuth = getAuth(secondaryApp);
