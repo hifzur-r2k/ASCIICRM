@@ -5,7 +5,7 @@ import autoTable from 'jspdf-autotable';
 import {
   Upload, Download, FileText, UploadCloud, LayoutGrid, Search,
   Save, Trash2, Database, Clock, Check, BarChart3, 
-  LogOut, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, RefreshCw
+  LogOut, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, RefreshCw, ClipboardList
 } from 'lucide-react';
 import { collection, getDocs, deleteDoc, doc, setDoc } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
@@ -46,6 +46,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const rosterInputRef = useRef(null);
   const [dashboardTab, setDashboardTab] = useState('upload');
   const [savedSheets, setSavedSheets] = useState([]);
+  const [dailyLogs, setDailyLogs] = useState([]); // NEW: Stores the audit trail
   const [isSaving, setIsSaving] = useState(false);
   const [hasSavedCurrent, setHasSavedCurrent] = useState(false);
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
@@ -76,6 +77,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const fetchData = async () => {
     setIsLoadingRecords(true);
     try {
+      // Fetch 15-day sheets
       const sheetsSnap = await getDocs(collection(db, "attendance_sheets"));
       const sheets = [];
       let aggregatedSites = new Set();
@@ -90,9 +92,18 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       sheets.sort((a, b) => b.id.localeCompare(a.id));
       setSavedSheets(sheets);
 
+      // NEW: Fetch daily audit logs
+      try {
+        const logsSnap = await getDocs(collection(db, "daily_logs"));
+        const logs = [];
+        logsSnap.forEach(d => logs.push({ id: d.id, ...d.data() }));
+        logs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)); // Newest first
+        setDailyLogs(logs);
+      } catch (e) { console.error("Error fetching daily logs:", e); }
+
+      // Fetch master data
       let loadedSites = Array.from(aggregatedSites);
       let loadedWorkers = [];
-
       try {
         const masterSnap = await getDocs(collection(db, "master_data"));
         masterSnap.forEach(docSnap => {
@@ -113,7 +124,6 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
   };
 
-  // --- EXCEL PARSER ---
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -629,10 +639,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     setTeamMessage({ text: "Authorizing secure link...", type: "loading" });
     
     try {
-      // Create user silently using the secondary app
       await createUserWithEmailAndPassword(secondaryAuth, newSupEmail, newSupPassword);
-      
-      // Store their name in the database so you can track them easily later
       await setDoc(doc(db, "supervisors", newSupEmail.toLowerCase()), {
         name: newSupName || "Unnamed Supervisor",
         email: newSupEmail.toLowerCase(),
@@ -735,6 +742,9 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                 </button>
                 <button onClick={() => { setDashboardTab('analytics'); fetchData(); }} className={`flex-1 sm:flex-none px-2 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-full font-bold text-[10px] sm:text-sm transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2.5 ${dashboardTab === 'analytics' ? 'bg-white text-blue-600 shadow-sm border border-gray-50' : 'text-gray-500 hover:text-gray-700'}`}>
                   <BarChart3 className={`w-5 h-5 sm:w-4 sm:h-4 ${dashboardTab === 'analytics' ? 'text-blue-600' : 'text-gray-400'}`} /> <span className="text-center leading-tight">Analytics</span>
+                </button>
+                <button onClick={() => setDashboardTab('logs')} className={`flex-1 sm:flex-none px-2 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-full font-bold text-[10px] sm:text-sm transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2.5 ${dashboardTab === 'logs' ? 'bg-white text-orange-600 shadow-sm border border-gray-50' : 'text-gray-500 hover:text-gray-700'}`}>
+                  <ClipboardList className={`w-5 h-5 sm:w-4 sm:h-4 ${dashboardTab === 'logs' ? 'text-orange-600' : 'text-gray-400'}`} /> <span className="text-center leading-tight">Logs</span>
                 </button>
                 <button onClick={() => setDashboardTab('team')} className={`flex-1 sm:flex-none px-2 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-full font-bold text-[10px] sm:text-sm transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2.5 ${dashboardTab === 'team' ? 'bg-white text-purple-600 shadow-sm border border-gray-50' : 'text-gray-500 hover:text-gray-700'}`}>
                   <Users className={`w-5 h-5 sm:w-4 sm:h-4 ${dashboardTab === 'team' ? 'text-purple-600' : 'text-gray-400'}`} /> <span className="text-center leading-tight">Team</span>
@@ -982,7 +992,44 @@ export default function AdminDashboard({ currentUser, onLogout }) {
               </div>
             )}
 
-            {/* TAB 4: SECURE TEAM MANAGEMENT */}
+            {/* TAB 4: AUDIT LOGS */}
+            {dashboardTab === 'logs' && (
+              <div className="max-w-4xl mx-auto">
+                <div className="bg-white rounded-[2rem] p-6 md:p-8 shadow-sm border border-gray-100">
+                  <h2 className="text-xl md:text-2xl font-black text-gray-900 mb-6 flex items-center gap-2">
+                    <Clock className="w-6 h-6 text-orange-500"/> Audit Logs & Submissions
+                  </h2>
+                  
+                  <div className="space-y-3 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
+                    {dailyLogs.length === 0 ? (
+                      <p className="text-center text-gray-500 py-8 font-medium">No attendance logs found.</p>
+                    ) : (
+                      dailyLogs.map(log => (
+                        <div key={log.id} className="bg-gray-50 p-4 rounded-2xl border border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="bg-orange-100 text-orange-700 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider">
+                                {new Date(log.timestamp).toLocaleString()}
+                              </span>
+                              <span className="font-bold text-gray-900 text-sm">{log.site}</span>
+                            </div>
+                            <p className="text-xs text-gray-500 font-bold flex items-center gap-1">
+                              <Users className="w-3 h-3"/> {log.contractor}'s Team <span className="text-gray-300 mx-1">|</span> {log.workers?.length || 0} Workers Logged
+                            </p>
+                          </div>
+                          <div className="bg-white px-3 py-2 rounded-xl border border-gray-200 text-right w-full md:w-auto">
+                            <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-0.5">Submitted By</p>
+                            <p className="text-xs font-bold text-blue-600">{log.submittedBy || "Unknown"}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 5: SECURE TEAM MANAGEMENT */}
             {dashboardTab === 'team' && (
               <div className="max-w-2xl mx-auto">
                 <div className="bg-white rounded-[2.5rem] p-8 md:p-12 shadow-sm border border-gray-100 text-center">
