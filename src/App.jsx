@@ -5,13 +5,12 @@ import 'jspdf-autotable';
 import {
   Upload, Download, FileText, UploadCloud, LayoutGrid, Search,
   Save, Trash2, Database, Clock, Check, BarChart3, Edit2,
-  LogOut, Lock, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, MapPin, HardHat, RefreshCw
+  LogOut, Lock, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, MapPin, HardHat, RefreshCw, ChevronDown
 } from 'lucide-react';
 import { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, setDoc } from "firebase/firestore";
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { db, auth } from './firebase';
 
-// Helper: Calculates which 15-day Bucket a date belongs to
 const getPeriodKey = (dateString) => {
   const d = new Date(dateString);
   const year = d.getFullYear();
@@ -40,7 +39,6 @@ export default function App() {
   const [masterSites, setMasterSites] = useState([]);
   const [masterWorkers, setMasterWorkers] = useState([]);
 
-  // Dynamically learn available contractors for Supervisor Dropdown
   const defaultContractors = ["Arvind", "Laljeet", "Deepak"];
   const dynamicContractors = Array.from(new Set([...defaultContractors, ...masterWorkers.map(w => w.contractor)])).filter(Boolean);
 
@@ -77,6 +75,11 @@ export default function App() {
   const [workerSearch, setWorkerSearch] = useState("");
   const [supAttendance, setSupAttendance] = useState({});
   const [isSubmittingLog, setIsSubmittingLog] = useState(false);
+  
+  // Custom Dropdown UI States
+  const [isSiteDropdownOpen, setIsSiteDropdownOpen] = useState(false);
+  const [isTeamDropdownOpen, setIsTeamDropdownOpen] = useState(false);
+  const [siteSearchQuery, setSiteSearchQuery] = useState(""); // NEW: Site Search State
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -118,7 +121,6 @@ export default function App() {
           data.siteData.forEach(s => { if (s.site) aggregatedSites.add(s.site); });
         }
       });
-      // Sort buckets descending by ID (e.g. 2026-08-H2 before 2026-08-H1)
       sheets.sort((a, b) => b.id.localeCompare(a.id));
       setSavedSheets(sheets);
 
@@ -399,12 +401,11 @@ export default function App() {
   };
 
   const loadSavedRecord = (sheet) => {
-    setSheetName(sheet.sheetName); setSheetMonth(sheet.id.substring(0, 7)); // e.g. "2026-08"
+    setSheetName(sheet.sheetName); setSheetMonth(sheet.id.substring(0, 7));
     setSiteData(sheet.siteData || []); setDayData(sheet.dayData || []); setWorkerData(sheet.workerData || []);
     setHasSavedCurrent(true); setSearchQuery(""); setSelectedRecordContractor(null);
   };
 
-  // --- ANALYTICS ENGINE ---
   const getGlobalAnalytics = () => {
     if (!globalSearch.trim()) return null;
     const targetSite = globalSearch.toLowerCase().trim();
@@ -492,7 +493,6 @@ export default function App() {
   };
   const multiSiteData = getMultiSiteAnalytics();
 
-  // --- DRILL DOWN DATA FILTERS ---
   const activeData = activeTab === 'site' ? siteData : activeTab === 'day' ? dayData : workerData;
   const contractorFilteredData = selectedRecordContractor ? activeData.filter(row => row.contractor === selectedRecordContractor) : activeData;
   const filteredData = contractorFilteredData.filter(row => row.site ? row.site.toLowerCase().includes(searchQuery.toLowerCase()) : row.worker.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -512,9 +512,8 @@ export default function App() {
     return acc;
   }, { masonReg: 0, masonOT: 0, halfMasonReg: 0, halfMasonOT: 0, helperReg: 0, helperOT: 0, totalBaseCost: 0, totalOTCost: 0 });
 
-  const exportToExcel = () => { }; const exportToPDF = () => { };
+  const exportToExcel = () => { }; const exportToPDF = () => { }; 
 
-  // --- SUPERVISOR ROSTER LOGIC & SUBMIT ---
   const handleAttendanceChange = (name, status) => {
     setSupAttendance(prev => ({ ...prev, [name]: { ...prev[name], status: status, ot: status === 'absent' ? '' : prev[name].ot } }));
   };
@@ -594,7 +593,6 @@ export default function App() {
     setIsSubmittingLog(false);
   };
 
-  // --- RENDER LOGIC ---
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-[#f8fafc] text-gray-500 font-bold">Initializing Secure Environment...</div>;
   if (!user) {
     return (
@@ -621,7 +619,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#f8fafc] text-gray-800 font-sans selection:bg-blue-100 selection:text-blue-900 pb-12">
 
-      {/* GLOBAL HEADER */}
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex justify-between items-center shadow-sm sticky top-0 z-50">
         <div className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity" onClick={goHome} title="Go to Dashboard">
           <div className={`p-1.5 rounded-lg ${activeRole === 'master_admin' ? 'bg-blue-600' : 'bg-emerald-600'}`}><LayoutGrid className="w-4 h-4 text-white" /></div>
@@ -639,67 +636,122 @@ export default function App() {
         </div>
       </header>
 
-      {/* SUPERVISOR FIELD PORTAL */}
       {activeRole === 'admin' ? (
-        <div className="max-w-3xl mx-auto pt-8 md:pt-12 px-4 space-y-6">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-black tracking-tight text-gray-900 mb-2">Hello Team,</h1>
-            <p className="text-sm font-bold text-gray-400 uppercase tracking-widest">Daily Field Attendance</p>
-          </div>
+        <div className="max-w-3xl mx-auto pt-4 md:pt-8 px-2 md:px-4 space-y-4">
+          <div className="bg-white rounded-[1.5rem] md:rounded-[2rem] p-4 md:p-8 shadow-sm border border-gray-100 space-y-4 md:space-y-6">
 
-          <div className="bg-white rounded-[2rem] p-6 md:p-8 shadow-sm border border-gray-100 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex items-center gap-1"><Calendar className="w-3 h-3" /> Work Date</label>
-                <input type="date" value={supDate} onChange={(e) => setSupDate(e.target.value)} className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 rounded-xl text-sm font-bold text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all" />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-2">
+              <div className="space-y-1.5 relative z-30">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Work Date</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                    <Calendar className="h-4 w-4 text-emerald-500" />
+                  </div>
+                  <input type="date" value={supDate} onChange={(e) => setSupDate(e.target.value)} className="w-full bg-gray-50 hover:bg-white border border-gray-200 pl-10 pr-3 py-3 rounded-xl text-sm font-black text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 shadow-sm transition-all cursor-pointer relative [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:cursor-pointer z-10 bg-transparent" />
+                </div>
               </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex items-center gap-1"><MapPin className="w-3 h-3" /> Select Site</label>
-                <select value={supSite} onChange={(e) => setSupSite(e.target.value)} className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 rounded-xl text-sm font-bold text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 appearance-none cursor-pointer">
-                  <option value="" disabled>Choose a site...</option>
-                  {masterSites.map(site => <option key={site} value={site}>{site}</option>)}
-                </select>
-              </div>
-            </div>
 
-            <div className="space-y-2 pt-2 border-t border-gray-50">
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 flex items-center gap-1"><Users className="w-3 h-3" /> Select Contractor</label>
-              <select value={supContractor} onChange={(e) => setSupContractor(e.target.value)} className="w-full bg-gray-50 border border-gray-200 px-4 py-3.5 rounded-xl text-sm font-bold text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 appearance-none cursor-pointer">
-                <option value="" disabled>Choose contractor crew...</option>
-                {dynamicContractors.map(contractor => <option key={contractor} value={contractor}>{contractor}'s Team</option>)}
-              </select>
+              {/* CUSTOM SITE DROPDOWN WITH SEARCH */}
+              <div className="space-y-1.5 relative z-50">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Select Site</label>
+                <div className="relative">
+                  {isSiteDropdownOpen && <div className="fixed inset-0 z-40" onClick={() => setIsSiteDropdownOpen(false)}></div>}
+                  <div className="w-full bg-gray-50 hover:bg-white border border-gray-200 pl-10 pr-10 py-3 rounded-xl text-sm font-black text-gray-800 shadow-sm transition-all cursor-pointer relative z-50 flex items-center" onClick={() => { setIsSiteDropdownOpen(!isSiteDropdownOpen); setIsTeamDropdownOpen(false); setSiteSearchQuery(""); }}>
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                      <MapPin className={`h-4 w-4 ${supSite ? 'text-emerald-500' : 'text-gray-400'}`} />
+                    </div>
+                    <span className={supSite ? 'text-gray-900 truncate' : 'text-gray-400'}>{supSite || 'Choose Site...'}</span>
+                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none">
+                      <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${isSiteDropdownOpen ? 'rotate-180 text-emerald-500' : 'text-gray-400'}`} />
+                    </div>
+                  </div>
+                  <div className={`absolute top-full left-0 mt-2 w-full bg-white border border-gray-100 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] z-50 overflow-hidden transition-all duration-200 origin-top ${isSiteDropdownOpen ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0 pointer-events-none'}`}>
+                    
+                    {/* Sticky Search Bar */}
+                    <div className="p-2 border-b border-gray-50 bg-gray-50/50">
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input 
+                          type="text" 
+                          placeholder="Search site..." 
+                          value={siteSearchQuery} 
+                          onChange={(e) => setSiteSearchQuery(e.target.value)}
+                          onClick={(e) => e.stopPropagation()} 
+                          className="w-full pl-8 pr-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="max-h-52 overflow-y-auto custom-scrollbar py-1">
+                      {masterSites.filter(site => site.toLowerCase().includes(siteSearchQuery.toLowerCase())).map(site => (
+                        <div key={site} onClick={() => { setSupSite(site); setIsSiteDropdownOpen(false); setSiteSearchQuery(""); }} className={`px-4 py-2.5 text-sm font-black cursor-pointer transition-colors ${supSite === site ? 'bg-emerald-50 text-emerald-700' : 'text-gray-600 hover:bg-gray-50 hover:text-blue-600'}`}>
+                          {site}
+                        </div>
+                      ))}
+                      {masterSites.filter(site => site.toLowerCase().includes(siteSearchQuery.toLowerCase())).length === 0 && <div className="px-4 py-3 text-xs font-bold text-gray-400 text-center">No sites found</div>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* CUSTOM TEAM DROPDOWN */}
+              <div className="space-y-1.5 relative z-40">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Contractor Team</label>
+                <div className="relative">
+                  {isTeamDropdownOpen && <div className="fixed inset-0 z-40" onClick={() => setIsTeamDropdownOpen(false)}></div>}
+                  <div className="w-full bg-gray-50 hover:bg-white border border-gray-200 pl-10 pr-10 py-3 rounded-xl text-sm font-black text-gray-800 shadow-sm transition-all cursor-pointer relative z-50 flex items-center" onClick={() => { setIsTeamDropdownOpen(!isTeamDropdownOpen); setIsSiteDropdownOpen(false); }}>
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                      <Users className={`h-4 w-4 ${supContractor ? 'text-emerald-500' : 'text-gray-400'}`} />
+                    </div>
+                    <span className={supContractor ? 'text-gray-900 truncate' : 'text-gray-400'}>{supContractor ? `${supContractor}'s Team` : 'Select Team...'}</span>
+                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none">
+                      <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${isTeamDropdownOpen ? 'rotate-180 text-emerald-500' : 'text-gray-400'}`} />
+                    </div>
+                  </div>
+                  <div className={`absolute top-full left-0 mt-2 w-full bg-white border border-gray-100 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] z-50 overflow-hidden transition-all duration-200 origin-top ${isTeamDropdownOpen ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0 pointer-events-none'}`}>
+                    <div className="max-h-60 overflow-y-auto custom-scrollbar py-2">
+                      {dynamicContractors.map(contractor => (
+                        <div key={contractor} onClick={() => { setSupContractor(contractor); setIsTeamDropdownOpen(false); }} className={`px-4 py-3 text-sm font-black cursor-pointer transition-colors ${supContractor === contractor ? 'bg-emerald-50 text-emerald-700' : 'text-gray-600 hover:bg-gray-50 hover:text-blue-600'}`}>
+                          {contractor}'s Team
+                        </div>
+                      ))}
+                      {dynamicContractors.length === 0 && <div className="px-4 py-3 text-xs font-bold text-gray-400 text-center">No teams found</div>}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {supContractor && (
-              <div className="pt-6 border-t border-gray-100">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-                  <div>
-                    <h3 className="font-black text-gray-900 text-lg">Daily Roster <span className="text-gray-400 font-medium text-sm">({activeContractorWorkers.length} total)</span></h3>
-                    <span className="bg-gray-100 text-gray-500 text-[9px] font-bold px-2 py-1 rounded-md uppercase tracking-wider mt-1 inline-block">All Defaulted to Absent</span>
+              <div className="pt-4 md:pt-6 border-t border-gray-100">
+                <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-2 mb-4">
+                  <div className="flex items-center justify-between sm:justify-start gap-3">
+                    <h3 className="font-black text-gray-900 text-base md:text-lg">Roster <span className="text-gray-400">({activeContractorWorkers.length})</span></h3>
+                    <span className="bg-gray-100 text-gray-500 text-[8px] md:text-[9px] font-bold px-2 py-1 rounded md:rounded-md uppercase tracking-wider">Default: Absent</span>
                   </div>
-                  <div className="relative w-full md:w-64">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input type="text" placeholder="Search worker..." value={workerSearch} onChange={(e) => setWorkerSearch(e.target.value)} className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:bg-white transition-all" />
+                  <div className="relative w-full sm:w-48 md:w-64">
+                    <Search className="w-3.5 h-3.5 md:w-4 md:h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input type="text" placeholder="Search name..." value={workerSearch} onChange={(e) => setWorkerSearch(e.target.value)} className="w-full pl-8 md:pl-9 pr-3 md:pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg md:rounded-xl text-xs md:text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:bg-white" />
                   </div>
                 </div>
 
-                <div className="space-y-8">
+                <div className="space-y-6">
                   {masons.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="text-[11px] font-black text-blue-500 uppercase tracking-widest border-b border-gray-100 pb-2 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-500"></div> MASONS</h4>
+                    <div className="space-y-2">
+                      <h4 className="text-[10px] font-black text-blue-500 uppercase tracking-widest border-b border-gray-100 pb-1.5 flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div> MASONS</h4>
                       {masons.map(worker => {
                         const rec = supAttendance[worker.name] || {};
                         const isPresent = rec.status === 'present'; const isHalf = rec.status === 'half'; const isAbsent = rec.status === 'absent';
                         return (
-                          <div key={worker.name} className={`px-4 py-3 rounded-2xl border transition-all flex items-center justify-between gap-2 ${isAbsent ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-blue-200 shadow-sm'}`}>
-                            <p className="font-black text-gray-900 text-sm truncate max-w-[100px] sm:max-w-[200px]">{worker.name}</p>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <div className="flex bg-gray-100 p-0.5 rounded-xl border border-gray-200/50 shadow-inner">
-                                <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isPresent ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
-                                <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
-                                <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
+                          <div key={worker.name} className={`px-3 py-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 ${isAbsent ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-blue-200 shadow-sm'}`}>
+                            <p className="font-black text-gray-900 text-sm flex-1 min-w-0 pr-2 truncate">{worker.name}</p>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200/50">
+                                <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isPresent ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
                               </div>
-                              {(isPresent || isHalf) && <input type="number" placeholder="OT" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-12 sm:w-16 h-8 bg-gray-50 border border-gray-200 px-1 rounded-lg text-[10px] sm:text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 text-center shadow-inner" />}
+                              {(isPresent || isHalf) && <input type="number" placeholder="OT" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-12 sm:w-16 h-7 sm:h-8 bg-gray-50 border border-gray-200 px-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 text-center" />}
                             </div>
                           </div>
                         );
@@ -708,21 +760,21 @@ export default function App() {
                   )}
 
                   {halfMasons.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="text-[11px] font-black text-purple-500 uppercase tracking-widest border-b border-gray-100 pb-2 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-purple-500"></div> HALF MASONS</h4>
+                    <div className="space-y-2">
+                      <h4 className="text-[10px] font-black text-purple-500 uppercase tracking-widest border-b border-gray-100 pb-1.5 flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-purple-500"></div> HALF MASONS</h4>
                       {halfMasons.map(worker => {
                         const rec = supAttendance[worker.name] || {};
                         const isPresent = rec.status === 'present'; const isHalf = rec.status === 'half'; const isAbsent = rec.status === 'absent';
                         return (
-                          <div key={worker.name} className={`px-4 py-3 rounded-2xl border transition-all flex items-center justify-between gap-2 ${isAbsent ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-blue-200 shadow-sm'}`}>
-                            <p className="font-black text-gray-900 text-sm truncate max-w-[100px] sm:max-w-[200px]">{worker.name}</p>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <div className="flex bg-gray-100 p-0.5 rounded-xl border border-gray-200/50 shadow-inner">
-                                <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isPresent ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
-                                <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
-                                <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
+                          <div key={worker.name} className={`px-3 py-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 ${isAbsent ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-purple-200 shadow-sm'}`}>
+                            <p className="font-black text-gray-900 text-sm flex-1 min-w-0 pr-2 truncate">{worker.name}</p>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200/50">
+                                <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isPresent ? 'bg-purple-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
                               </div>
-                              {(isPresent || isHalf) && <input type="number" placeholder="OT" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-12 sm:w-16 h-8 bg-gray-50 border border-gray-200 px-1 rounded-lg text-[10px] sm:text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 text-center shadow-inner" />}
+                              {(isPresent || isHalf) && <input type="number" placeholder="OT" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-12 sm:w-16 h-7 sm:h-8 bg-gray-50 border border-gray-200 px-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-purple-500/20 text-center" />}
                             </div>
                           </div>
                         );
@@ -731,21 +783,21 @@ export default function App() {
                   )}
 
                   {helpers.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="text-[11px] font-black text-orange-500 uppercase tracking-widest border-b border-gray-100 pb-2 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-orange-500"></div> HELPERS</h4>
+                    <div className="space-y-2">
+                      <h4 className="text-[10px] font-black text-orange-500 uppercase tracking-widest border-b border-gray-100 pb-1.5 flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-orange-500"></div> HELPERS</h4>
                       {helpers.map(worker => {
                         const rec = supAttendance[worker.name] || {};
                         const isPresent = rec.status === 'present'; const isHalf = rec.status === 'half'; const isAbsent = rec.status === 'absent';
                         return (
-                          <div key={worker.name} className={`px-4 py-3 rounded-2xl border transition-all flex items-center justify-between gap-2 ${isAbsent ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-blue-200 shadow-sm'}`}>
-                            <p className="font-black text-gray-900 text-sm truncate max-w-[100px] sm:max-w-[200px]">{worker.name}</p>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <div className="flex bg-gray-100 p-0.5 rounded-xl border border-gray-200/50 shadow-inner">
-                                <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isPresent ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
-                                <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
-                                <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
+                          <div key={worker.name} className={`px-3 py-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 ${isAbsent ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-orange-200 shadow-sm'}`}>
+                            <p className="font-black text-gray-900 text-sm flex-1 min-w-0 pr-2 truncate">{worker.name}</p>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200/50">
+                                <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isPresent ? 'bg-orange-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-2.5 py-1.5 rounded-md text-[10px] sm:text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
                               </div>
-                              {(isPresent || isHalf) && <input type="number" placeholder="OT" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-12 sm:w-16 h-8 bg-gray-50 border border-gray-200 px-1 rounded-lg text-[10px] sm:text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 text-center shadow-inner" />}
+                              {(isPresent || isHalf) && <input type="number" placeholder="OT" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-12 sm:w-16 h-7 sm:h-8 bg-gray-50 border border-gray-200 px-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-orange-500/20 text-center" />}
                             </div>
                           </div>
                         );
@@ -754,14 +806,14 @@ export default function App() {
                   )}
 
                   {activeContractorWorkers.length === 0 && (
-                    <div className="text-center py-12 text-gray-400 font-bold bg-gray-50 rounded-2xl border border-gray-100">
-                      No workers found for this contractor.<br />Upload an Excel sheet first to automatically learn their names.
+                    <div className="text-center py-8 text-gray-400 font-bold bg-gray-50 rounded-xl border border-gray-100 text-xs">
+                      No workers found for this team.
                     </div>
                   )}
                 </div>
 
-                <button onClick={submitDailyLog} disabled={isSubmittingLog || activeContractorWorkers.length === 0} className={`w-full mt-10 font-black py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-colors ${isSubmittingLog || activeContractorWorkers.length === 0 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-900 hover:bg-emerald-600 text-white'}`}>
-                  <Save className="w-5 h-5" /> {isSubmittingLog ? 'Saving...' : "Secure Today's Attendance"}
+                <button onClick={submitDailyLog} disabled={isSubmittingLog || activeContractorWorkers.length === 0} className={`w-full mt-8 font-black py-3.5 rounded-xl flex items-center justify-center gap-2 shadow-md transition-colors ${isSubmittingLog || activeContractorWorkers.length === 0 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-900 hover:bg-emerald-600 text-white'}`}>
+                  <Save className="w-4 h-4" /> {isSubmittingLog ? 'Saving...' : "Secure Today's Attendance"}
                 </button>
               </div>
             )}
@@ -770,17 +822,18 @@ export default function App() {
       ) : (
 
         /* ============================================================== */
-        /*                 MASTER ADMIN DASHBOARD (EXCEL)                 */
+        /*                 MASTER ADMIN DASHBOARD                         */
         /* ============================================================== */
         <>
           <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
           {activeData.length === 0 ? (
-            <div className="max-w-6xl mx-auto pt-10 md:pt-16 px-4">
-              <div className="text-center mb-10 space-y-3">
+            <div className="max-w-6xl mx-auto pt-8 md:pt-16 px-4">
+              <div className="text-center mb-8 md:mb-10 space-y-2 md:space-y-3">
                 <h1 className="text-3xl md:text-5xl font-black tracking-tight text-gray-900">Welcome Back.</h1>
-                <p className="text-sm md:text-base font-bold text-gray-400 uppercase tracking-widest">Financial & Attendance Engine</p>
+                <p className="text-xs md:text-base font-bold text-gray-400 uppercase tracking-widest">Financial & Attendance Engine</p>
               </div>
 
+              {/* COMPACT HOME TABS FOR MOBILE */}
               <div className="flex justify-center mb-8 px-2">
                 <div className="bg-gray-100 p-1.5 rounded-[1.25rem] sm:rounded-full flex w-full sm:w-auto shadow-inner overflow-hidden">
                   <button onClick={() => setDashboardTab('upload')} className={`flex-1 sm:flex-none px-2 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-full font-bold text-[10px] sm:text-sm transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2.5 ${dashboardTab === 'upload' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
@@ -795,7 +848,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* TAB 1: UPLOAD ZONE */}
               {dashboardTab === 'upload' && (
                 <div className="max-w-2xl mx-auto space-y-4">
                   <div onClick={() => fileInputRef.current?.click()} className="group w-full cursor-pointer bg-white rounded-[2.5rem] border-2 border-dashed border-gray-200 hover:border-blue-500 hover:bg-blue-50/50 transition-all duration-300 p-8 md:p-16 shadow-sm hover:shadow-xl text-center">
@@ -814,7 +866,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* TAB 2: SAVED RECORDS */}
               {dashboardTab === 'records' && (
                 <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-sm border border-gray-100 min-h-[400px]">
                   {isLoadingRecords ? (
@@ -844,7 +895,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* TAB 3: GLOBAL ANALYTICS */}
               {dashboardTab === 'analytics' && (
                 <div className="max-w-4xl mx-auto space-y-6">
                   <div className="bg-white px-6 py-10 md:p-12 rounded-[2.5rem] shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07),0_10px_20px_-2px_rgba(0,0,0,0.04)] border border-gray-100 text-center">
@@ -925,6 +975,7 @@ export default function App() {
                                 <div key={idx} className="p-4 hover:bg-gray-50 transition-colors flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                                   <div className="max-w-full md:max-w-[200px]">
                                     <h4 className="font-black text-gray-800 text-base md:text-lg truncate" title={record.sheetName}>{record.sheetName}</h4>
+                                    <p className="text-xs font-semibold text-gray-400 flex items-center gap-1 mt-0.5"><Clock className="w-3 h-3" /> {new Date(record.date).toLocaleDateString()}</p>
                                   </div>
                                   <div className="flex gap-2 md:gap-4 flex-wrap w-full md:w-auto justify-between md:justify-end items-center">
                                     <div className="text-center bg-white p-2 rounded-xl border border-gray-100 flex-1 md:flex-none min-w-[75px]">
@@ -1059,15 +1110,15 @@ export default function App() {
                 </div>
               </div>
 
-
               {/* NEW DRILL-DOWN LOGIC: The Contractor Boxes */}
               {!selectedRecordContractor ? (
                 <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-100 p-8 md:p-12 text-center max-w-4xl mx-auto mt-8">
                   <h2 className="text-2xl md:text-3xl font-black text-gray-900 mb-2">Select Contractor Team</h2>
                   <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-10">Data Period: {sheetName}</p>
-
+                  
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
-                    {dynamicContractors.map(c => {
+                    {/* Maps over all contractors that have actual data saved inside this specific bucket */}
+                    {Array.from(new Set([...dynamicContractors, ...workerData.map(w => w.contractor)])).filter(Boolean).map(c => {
                       const hasData = workerData.some(w => w.contractor === c);
                       return (
                         <div key={c} onClick={() => hasData && setSelectedRecordContractor(c)} className={`group relative p-6 md:p-8 rounded-[2rem] border-2 transition-all ${hasData ? 'bg-white hover:bg-blue-50/50 border-gray-100 hover:border-blue-200 cursor-pointer shadow-sm hover:shadow-xl' : 'bg-gray-50 border-dashed border-gray-200 opacity-50 cursor-not-allowed'}`}>
@@ -1097,7 +1148,7 @@ export default function App() {
                     </div>
                     <div className="relative w-full lg:flex-1 lg:max-w-xs">
                       <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input type="text" placeholder="Search site code..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-11 pr-4 py-2.5 md:py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm" />
+                      <input type="text" placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-11 pr-4 py-2.5 md:py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm" />
                     </div>
                     <div className="flex w-full lg:w-auto gap-2">
                       <button onClick={exportToExcel} className="flex-1 lg:flex-none justify-center text-xs md:text-sm font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 px-4 py-2.5 md:py-3 rounded-xl flex items-center gap-2 transition-colors border border-emerald-200"><Download className="w-4 h-4" /> Excel</button>
@@ -1248,9 +1299,9 @@ export default function App() {
                       )}
 
                       {filteredData.length > 0 && (
-                        <div className="bg-gray-900 p-5 shadow-xl">
+                        <div className="bg-gray-900 p-5 shadow-[0_-4px_15px_-3px_rgba(0,0,0,0.1)]">
                           <h3 className="text-white font-black text-center text-sm mb-4 tracking-wider">SHEET TOTALS</h3>
-
+                          
                           {activeTab === 'worker' ? (
                             <div className="grid grid-cols-2 gap-2 text-xs mb-3">
                               <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Days</p><p className="text-base font-black text-white">{totals.masonReg + totals.halfMasonReg + totals.helperReg}</p></div>
@@ -1263,7 +1314,7 @@ export default function App() {
                               <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Helper</p><p className="text-base font-black text-white">{totals.helperReg} <span className="text-[10px] text-gray-400">({totals.helperOT}h)</span></p></div>
                             </div>
                           )}
-
+                          
                           <div className="bg-emerald-600 p-4 rounded-xl border border-emerald-500 text-center">
                             <p className="text-emerald-100 font-bold mb-1 uppercase text-[10px] tracking-wider">Grand Financial Total</p>
                             <p className="text-2xl font-black text-white">{formatCurrency(totals.totalBaseCost + totals.totalOTCost)}</p>
