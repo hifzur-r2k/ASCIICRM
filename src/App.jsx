@@ -39,7 +39,7 @@ export default function App() {
 
   const [masterSites, setMasterSites] = useState([]);
   const [masterWorkers, setMasterWorkers] = useState([]);
-  
+
   // Dynamically learn available contractors for Supervisor Dropdown
   const defaultContractors = ["Arvind", "Laljeet", "Deepak"];
   const dynamicContractors = Array.from(new Set([...defaultContractors, ...masterWorkers.map(w => w.contractor)])).filter(Boolean);
@@ -51,7 +51,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('day');
   const [sheetName, setSheetName] = useState("");
   const [sheetMonth, setSheetMonth] = useState("");
-  const [sheetContractor, setSheetContractor] = useState(""); 
+  const [sheetContractor, setSheetContractor] = useState("");
   const [selectedRecordContractor, setSelectedRecordContractor] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const fileInputRef = useRef(null);
@@ -99,7 +99,7 @@ export default function App() {
   };
 
   const goHome = () => {
-    setSiteData([]); setDayData([]); setWorkerData([]); 
+    setSiteData([]); setDayData([]); setWorkerData([]);
     setSelectedRecordContractor(null); setDashboardTab('upload');
   };
 
@@ -512,7 +512,7 @@ export default function App() {
     return acc;
   }, { masonReg: 0, masonOT: 0, halfMasonReg: 0, halfMasonOT: 0, helperReg: 0, helperOT: 0, totalBaseCost: 0, totalOTCost: 0 });
 
-  const exportToExcel = () => { }; const exportToPDF = () => { }; 
+  const exportToExcel = () => { }; const exportToPDF = () => { };
 
   // --- SUPERVISOR ROSTER LOGIC & SUBMIT ---
   const handleAttendanceChange = (name, status) => {
@@ -691,17 +691,15 @@ export default function App() {
                         const rec = supAttendance[worker.name] || {};
                         const isPresent = rec.status === 'present'; const isHalf = rec.status === 'half'; const isAbsent = rec.status === 'absent';
                         return (
-                          <div key={worker.name} className={`p-4 rounded-2xl border transition-all ${isAbsent ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-blue-200 shadow-sm'}`}>
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                              <p className="font-black text-gray-900 text-base">{worker.name}</p>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <div className="flex bg-gray-100 p-1 rounded-xl">
-                                  <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${isPresent ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
-                                  <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
-                                  <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
-                                </div>
-                                {(isPresent || isHalf) && <input type="number" placeholder="OT hrs" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-20 bg-gray-50 border border-gray-200 px-3 py-2 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 text-center" />}
+                          <div key={worker.name} className={`px-4 py-3 rounded-2xl border transition-all flex items-center justify-between gap-2 ${isAbsent ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-blue-200 shadow-sm'}`}>
+                            <p className="font-black text-gray-900 text-sm truncate max-w-[100px] sm:max-w-[200px]">{worker.name}</p>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <div className="flex bg-gray-100 p-0.5 rounded-xl border border-gray-200/50 shadow-inner">
+                                <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isPresent ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
                               </div>
+                              {(isPresent || isHalf) && <input type="number" placeholder="OT" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-12 sm:w-16 h-8 bg-gray-50 border border-gray-200 px-1 rounded-lg text-[10px] sm:text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 text-center shadow-inner" />}
                             </div>
                           </div>
                         );
@@ -716,17 +714,15 @@ export default function App() {
                         const rec = supAttendance[worker.name] || {};
                         const isPresent = rec.status === 'present'; const isHalf = rec.status === 'half'; const isAbsent = rec.status === 'absent';
                         return (
-                          <div key={worker.name} className={`p-4 rounded-2xl border transition-all ${isAbsent ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-purple-200 shadow-sm'}`}>
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                              <p className="font-black text-gray-900 text-base">{worker.name}</p>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <div className="flex bg-gray-100 p-1 rounded-xl">
-                                  <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${isPresent ? 'bg-purple-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
-                                  <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
-                                  <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
-                                </div>
-                                {(isPresent || isHalf) && <input type="number" placeholder="OT hrs" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-20 bg-gray-50 border border-gray-200 px-3 py-2 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-purple-500/20 text-center" />}
+                          <div key={worker.name} className={`px-4 py-3 rounded-2xl border transition-all flex items-center justify-between gap-2 ${isAbsent ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-blue-200 shadow-sm'}`}>
+                            <p className="font-black text-gray-900 text-sm truncate max-w-[100px] sm:max-w-[200px]">{worker.name}</p>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <div className="flex bg-gray-100 p-0.5 rounded-xl border border-gray-200/50 shadow-inner">
+                                <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isPresent ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
                               </div>
+                              {(isPresent || isHalf) && <input type="number" placeholder="OT" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-12 sm:w-16 h-8 bg-gray-50 border border-gray-200 px-1 rounded-lg text-[10px] sm:text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 text-center shadow-inner" />}
                             </div>
                           </div>
                         );
@@ -741,17 +737,15 @@ export default function App() {
                         const rec = supAttendance[worker.name] || {};
                         const isPresent = rec.status === 'present'; const isHalf = rec.status === 'half'; const isAbsent = rec.status === 'absent';
                         return (
-                          <div key={worker.name} className={`p-4 rounded-2xl border transition-all ${isAbsent ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-orange-200 shadow-sm'}`}>
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                              <p className="font-black text-gray-900 text-base">{worker.name}</p>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <div className="flex bg-gray-100 p-1 rounded-xl">
-                                  <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${isPresent ? 'bg-orange-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
-                                  <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
-                                  <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
-                                </div>
-                                {(isPresent || isHalf) && <input type="number" placeholder="OT hrs" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-20 bg-gray-50 border border-gray-200 px-3 py-2 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-orange-500/20 text-center" />}
+                          <div key={worker.name} className={`px-4 py-3 rounded-2xl border transition-all flex items-center justify-between gap-2 ${isAbsent ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-blue-200 shadow-sm'}`}>
+                            <p className="font-black text-gray-900 text-sm truncate max-w-[100px] sm:max-w-[200px]">{worker.name}</p>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <div className="flex bg-gray-100 p-0.5 rounded-xl border border-gray-200/50 shadow-inner">
+                                <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isPresent ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isHalf ? 'bg-yellow-500 text-white shadow-md' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
+                                <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-black transition-all ${isAbsent ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
                               </div>
+                              {(isPresent || isHalf) && <input type="number" placeholder="OT" value={rec.ot} onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-12 sm:w-16 h-8 bg-gray-50 border border-gray-200 px-1 rounded-lg text-[10px] sm:text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 text-center shadow-inner" />}
                             </div>
                           </div>
                         );
@@ -787,16 +781,16 @@ export default function App() {
                 <p className="text-sm md:text-base font-bold text-gray-400 uppercase tracking-widest">Financial & Attendance Engine</p>
               </div>
 
-              <div className="flex justify-center mb-12">
-                <div className="bg-gray-100 p-1.5 rounded-full inline-flex shadow-inner overflow-x-auto max-w-full custom-scrollbar">
-                  <button onClick={() => setDashboardTab('upload')} className={`whitespace-nowrap px-6 py-3 rounded-full font-bold text-sm transition-all flex items-center gap-2.5 ${dashboardTab === 'upload' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                    <UploadCloud className={`w-4 h-4 ${dashboardTab === 'upload' ? 'text-gray-900' : 'text-gray-400'}`} /> Upload New
+              <div className="flex justify-center mb-8 px-2">
+                <div className="bg-gray-100 p-1.5 rounded-[1.25rem] sm:rounded-full flex w-full sm:w-auto shadow-inner overflow-hidden">
+                  <button onClick={() => setDashboardTab('upload')} className={`flex-1 sm:flex-none px-2 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-full font-bold text-[10px] sm:text-sm transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2.5 ${dashboardTab === 'upload' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                    <UploadCloud className={`w-5 h-5 sm:w-4 sm:h-4 ${dashboardTab === 'upload' ? 'text-gray-900' : 'text-gray-400'}`} /> <span className="text-center leading-tight">Upload</span>
                   </button>
-                  <button onClick={() => { setDashboardTab('records'); fetchData(); }} className={`whitespace-nowrap px-6 py-3 rounded-full font-bold text-sm transition-all flex items-center gap-2.5 ${dashboardTab === 'records' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                    <Database className={`w-4 h-4 ${dashboardTab === 'records' ? 'text-gray-900' : 'text-gray-400'}`} /> Saved Records
+                  <button onClick={() => { setDashboardTab('records'); fetchData(); }} className={`flex-1 sm:flex-none px-2 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-full font-bold text-[10px] sm:text-sm transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2.5 ${dashboardTab === 'records' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                    <Database className={`w-5 h-5 sm:w-4 sm:h-4 ${dashboardTab === 'records' ? 'text-gray-900' : 'text-gray-400'}`} /> <span className="text-center leading-tight">Records</span>
                   </button>
-                  <button onClick={() => { setDashboardTab('analytics'); fetchData(); }} className={`whitespace-nowrap px-6 py-3 rounded-full font-bold text-sm transition-all flex items-center gap-2.5 ${dashboardTab === 'analytics' ? 'bg-white text-blue-600 shadow-sm border border-gray-50' : 'text-gray-500 hover:text-gray-700'}`}>
-                    <BarChart3 className={`w-4 h-4 ${dashboardTab === 'analytics' ? 'text-blue-600' : 'text-gray-400'}`} /> Global Analytics
+                  <button onClick={() => { setDashboardTab('analytics'); fetchData(); }} className={`flex-1 sm:flex-none px-2 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-full font-bold text-[10px] sm:text-sm transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2.5 ${dashboardTab === 'analytics' ? 'bg-white text-blue-600 shadow-sm border border-gray-50' : 'text-gray-500 hover:text-gray-700'}`}>
+                    <BarChart3 className={`w-5 h-5 sm:w-4 sm:h-4 ${dashboardTab === 'analytics' ? 'text-blue-600' : 'text-gray-400'}`} /> <span className="text-center leading-tight">Analytics</span>
                   </button>
                 </div>
               </div>
@@ -1065,20 +1059,13 @@ export default function App() {
                 </div>
               </div>
 
-              {/* UNIFIED BUCKET ERROR HANDLER */}
-              {!sheetContractor || sheetContractor === "Unknown" ? (
-                <div className="bg-red-50 border border-red-200 rounded-[2rem] p-8 text-center mt-6">
-                  <h3 className="text-xl font-black text-red-700 mb-2">Unknown Contractor</h3>
-                  <p className="text-sm font-bold text-red-500">The uploaded file name must include the contractor's name (e.g., "Arvind May 1-15.xlsx") to save it to the bucket.</p>
-                </div>
-              ) : null}
 
               {/* NEW DRILL-DOWN LOGIC: The Contractor Boxes */}
               {!selectedRecordContractor ? (
                 <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-100 p-8 md:p-12 text-center max-w-4xl mx-auto mt-8">
                   <h2 className="text-2xl md:text-3xl font-black text-gray-900 mb-2">Select Contractor Team</h2>
                   <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-10">Data Period: {sheetName}</p>
-                  
+
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
                     {dynamicContractors.map(c => {
                       const hasData = workerData.some(w => w.contractor === c);
@@ -1202,43 +1189,68 @@ export default function App() {
                       )}
                     </table>
 
-                    {/* MOBILE CARDS */}
-                    <div className="block md:hidden p-3 space-y-4">
+                    {/* MOBILE CARDS (Ultra-Compact for Day/Worker, Standard for Site) */}
+                    <div className="block md:hidden">
                       {filteredData.length > 0 ? (
-                        filteredData.map((row, idx) => (
-                          <div key={idx} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 space-y-3">
-                            <div className="flex justify-between items-center border-b border-gray-50 pb-2">
-                              <span className="text-sm font-black text-gray-800 bg-gray-100 px-3 py-1.5 rounded-lg truncate max-w-[200px]">{activeTab === 'worker' ? `Name: ${row.worker}` : `Site: ${row.site}`}</span>
-                              {activeTab === 'day' && <span className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg whitespace-nowrap">Day {row.day}</span>}
-                            </div>
-                            
-                            {activeTab === 'worker' ? (
-                              <div className="grid grid-cols-2 gap-2 text-xs">
-                                <div className="bg-blue-50/50 p-2.5 rounded-xl border border-blue-100"><p className="text-blue-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">Total Days</p><p className="text-base font-black text-blue-900">{row.regDays}</p></div>
-                                <div className="bg-purple-50/50 p-2.5 rounded-xl border border-purple-100"><p className="text-purple-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">OT Hours</p><p className="text-base font-black text-purple-900">{row.otHours}</p></div>
+                        activeTab === 'site' ? (
+                          <div className="p-2 space-y-2.5 bg-gray-50/50">
+                            {filteredData.map((row, idx) => (
+                              <div key={idx} className="bg-white p-3 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.05)] border border-gray-100 space-y-2">
+                                <div className="flex justify-between items-center border-b border-gray-50 pb-1.5">
+                                  <span className="text-xs font-black text-gray-800 bg-gray-100 px-2 py-1 rounded-md truncate max-w-[200px]">Site: {row.site}</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-1.5 text-xs">
+                                  <div className="bg-blue-50/50 p-1.5 rounded-lg border border-blue-100"><p className="text-blue-600/80 font-bold mb-0.5 uppercase tracking-wider text-[8px]">Mason</p><p className="text-sm font-black text-blue-900">{row.masonReg} <span className="text-[9px] font-medium text-blue-400">({row.masonOT}h)</span></p></div>
+                                  <div className="bg-purple-50/50 p-1.5 rounded-lg border border-purple-100"><p className="text-purple-600/80 font-bold mb-0.5 uppercase tracking-wider text-[8px]">H. Mason</p><p className="text-sm font-black text-purple-900">{row.halfMasonReg} <span className="text-[9px] font-medium text-purple-400">({row.halfMasonOT}h)</span></p></div>
+                                  <div className="bg-orange-50/50 p-1.5 rounded-lg border border-orange-100"><p className="text-orange-600/80 font-bold mb-0.5 uppercase tracking-wider text-[8px]">Helper</p><p className="text-sm font-black text-orange-900">{row.helperReg} <span className="text-[9px] font-medium text-orange-400">({row.helperOT}h)</span></p></div>
+                                </div>
+                                <div className="bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-100 flex justify-between items-center">
+                                  <p className="text-emerald-700 font-bold text-[9px] uppercase tracking-wider">Total Site Cost</p>
+                                  <p className="text-emerald-900 font-black text-base">{formatCurrency((row.totalBaseCost || 0) + (row.totalOTCost || 0))}</p>
+                                </div>
                               </div>
-                            ) : (
-                              <div className="grid grid-cols-3 gap-2 text-xs">
-                                <div className="bg-blue-50/50 p-2.5 rounded-xl border border-blue-100"><p className="text-blue-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">Mason</p><p className="text-base font-black text-blue-900">{row.masonReg} <span className="text-[10px] font-medium text-blue-400">({row.masonOT}h)</span></p></div>
-                                <div className="bg-purple-50/50 p-2.5 rounded-xl border border-purple-100"><p className="text-purple-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">H. Mason</p><p className="text-base font-black text-purple-900">{row.halfMasonReg} <span className="text-[10px] font-medium text-purple-400">({row.halfMasonOT}h)</span></p></div>
-                                <div className="bg-orange-50/50 p-2.5 rounded-xl border border-orange-100"><p className="text-orange-600/80 font-bold mb-0.5 uppercase tracking-wider text-[9px]">Helper</p><p className="text-base font-black text-orange-900">{row.helperReg} <span className="text-[10px] font-medium text-orange-400">({row.helperOT}h)</span></p></div>
-                              </div>
-                            )}
-                            
-                            <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100 flex justify-between items-center">
-                              <p className="text-emerald-700 font-bold text-[10px] uppercase tracking-wider">{activeTab === 'worker' ? 'Total Payout' : 'Total Site Cost'}</p>
-                              <p className="text-emerald-900 font-black text-lg">{formatCurrency((row.totalBaseCost || 0) + (row.totalOTCost || 0))}</p>
-                            </div>
+                            ))}
                           </div>
-                        ))
+                        ) : (
+                          <div className="bg-white border-y border-gray-100 divide-y divide-gray-50 mt-2">
+                            {filteredData.map((row, idx) => (
+                              <div key={idx} className="flex justify-between items-center p-3 hover:bg-gray-50 transition-colors">
+                                <div className="min-w-0 flex-1">
+                                  {activeTab === 'worker' ? (
+                                    <>
+                                      <p className="text-xs font-black text-gray-900 truncate uppercase">{row.worker}</p>
+                                      <p className="text-[10px] text-gray-400 font-bold mt-0.5">
+                                        {row.regDays} Days <span className="text-blue-500 font-black">+{row.otHours}h OT</span>
+                                      </p>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div className="flex items-center gap-1.5 mb-0.5">
+                                        <span className="text-[9px] font-black text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded uppercase">Day {row.day}</span>
+                                        <p className="text-xs font-black text-gray-800 truncate">{row.site}</p>
+                                      </div>
+                                      <p className="text-[10px] text-gray-400 font-bold">
+                                        M:{row.masonReg} <span className="text-gray-300 mx-0.5">|</span> HM:{row.halfMasonReg} <span className="text-gray-300 mx-0.5">|</span> H:{row.helperReg}
+                                      </p>
+                                    </>
+                                  )}
+                                </div>
+                                <div className="text-right shrink-0 ml-3">
+                                  <p className="text-[8px] uppercase font-bold text-emerald-600/70 mb-0.5">{activeTab === 'worker' ? 'Total Payout' : 'Daily Cost'}</p>
+                                  <p className="text-sm font-black text-emerald-700">{formatCurrency((row.totalBaseCost || 0) + (row.totalOTCost || 0))}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )
                       ) : (
-                        <div className="text-center py-12 text-gray-500 font-medium bg-white rounded-2xl border border-gray-100">No records found</div>
+                        <div className="text-center py-10 text-gray-500 font-medium bg-white border-y border-gray-100 text-sm">No records found</div>
                       )}
 
                       {filteredData.length > 0 && (
-                        <div className="bg-gray-900 p-5 rounded-[2rem] shadow-xl mt-4 border border-gray-800">
+                        <div className="bg-gray-900 p-5 shadow-xl">
                           <h3 className="text-white font-black text-center text-sm mb-4 tracking-wider">SHEET TOTALS</h3>
-                          
+
                           {activeTab === 'worker' ? (
                             <div className="grid grid-cols-2 gap-2 text-xs mb-3">
                               <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Days</p><p className="text-base font-black text-white">{totals.masonReg + totals.halfMasonReg + totals.helperReg}</p></div>
@@ -1251,8 +1263,8 @@ export default function App() {
                               <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Helper</p><p className="text-base font-black text-white">{totals.helperReg} <span className="text-[10px] text-gray-400">({totals.helperOT}h)</span></p></div>
                             </div>
                           )}
-                          
-                          <div className="bg-emerald-600 p-4 rounded-2xl border border-emerald-500 text-center">
+
+                          <div className="bg-emerald-600 p-4 rounded-xl border border-emerald-500 text-center">
                             <p className="text-emerald-100 font-bold mb-1 uppercase text-[10px] tracking-wider">Grand Financial Total</p>
                             <p className="text-2xl font-black text-white">{formatCurrency(totals.totalBaseCost + totals.totalOTCost)}</p>
                           </div>
