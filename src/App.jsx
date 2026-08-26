@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import {
   Upload, Download, FileText, UploadCloud, LayoutGrid, Search,
   Save, Trash2, Database, Clock, Check, BarChart3, Edit2,
@@ -75,7 +75,7 @@ export default function App() {
   const [workerSearch, setWorkerSearch] = useState("");
   const [supAttendance, setSupAttendance] = useState({});
   const [isSubmittingLog, setIsSubmittingLog] = useState(false);
-  
+
   // Custom Dropdown UI States
   const [isSiteDropdownOpen, setIsSiteDropdownOpen] = useState(false);
   const [isTeamDropdownOpen, setIsTeamDropdownOpen] = useState(false);
@@ -512,7 +512,124 @@ export default function App() {
     return acc;
   }, { masonReg: 0, masonOT: 0, halfMasonReg: 0, halfMasonOT: 0, helperReg: 0, helperOT: 0, totalBaseCost: 0, totalOTCost: 0 });
 
-  const exportToExcel = () => { }; const exportToPDF = () => { }; 
+  // --- PROFESSIONAL EXPORT LOGIC ---
+  const exportToExcel = () => {
+    if (filteredData.length === 0) return alert("No data to export.");
+
+    // Create a beautiful, spaced-out header for the Excel file
+    let aoa = [
+      ["CRM_FIX - FINANCIAL & ATTENDANCE REPORT"],
+      [`Period: ${sheetName}`],
+      [`Contractor: ${selectedRecordContractor}`],
+      [`View: ${activeTab.toUpperCase()}-WISE`],
+      [] // Blank row for spacing
+    ];
+
+    if (activeTab === 'worker') {
+      aoa.push(["Worker Name", "Category", "Total Days", "Total OT (Hrs)", "Base Pay (Rs)", "OT Pay (Rs)", "Total Payout (Rs)"]);
+      filteredData.forEach(row => {
+        aoa.push([row.worker, row.type, row.regDays, row.otHours, row.totalBaseCost, row.totalOTCost, row.totalBaseCost + row.totalOTCost]);
+      });
+      aoa.push([]); // Blank row before totals
+      aoa.push(["GRAND TOTAL", "", totals.masonReg + totals.halfMasonReg + totals.helperReg, totals.masonOT + totals.halfMasonOT + totals.helperOT, totals.totalBaseCost, totals.totalOTCost, totals.totalBaseCost + totals.totalOTCost]);
+    } else {
+      const headers = activeTab === 'day'
+        ? ["Day", "Site Code", "Mason Days", "Mason OT", "HM Days", "HM OT", "Helper Days", "Helper OT", "Base Cost (Rs)", "OT Cost (Rs)", "Total Site Cost (Rs)"]
+        : ["Site Code", "Mason Days", "Mason OT", "HM Days", "HM OT", "Helper Days", "Helper OT", "Base Cost (Rs)", "OT Cost (Rs)", "Total Site Cost (Rs)"];
+      aoa.push(headers);
+      filteredData.forEach(row => {
+        const r = activeTab === 'day' ? [row.day] : [];
+        r.push(row.site, row.masonReg, row.masonOT, row.halfMasonReg, row.halfMasonOT, row.helperReg, row.helperOT, row.totalBaseCost, row.totalOTCost, row.totalBaseCost + row.totalOTCost);
+        aoa.push(r);
+      });
+      aoa.push([]); // Blank row before totals
+      const ft = activeTab === 'day' ? ["GRAND TOTAL", ""] : ["GRAND TOTAL"];
+      ft.push(totals.masonReg, totals.masonOT, totals.halfMasonReg, totals.halfMasonOT, totals.helperReg, totals.helperOT, totals.totalBaseCost, totals.totalOTCost, totals.totalBaseCost + totals.totalOTCost);
+      aoa.push(ft);
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+    // Make the columns nice and wide
+    ws['!cols'] = [
+      { wch: 18 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+      { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 20 }
+    ];
+
+    // Merge the top header rows so the title looks like a real corporate header
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 6 } },
+      { s: { r: 3, c: 0 }, e: { r: 3, c: 6 } }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Report");
+    XLSX.writeFile(wb, `CRM_FIX_${selectedRecordContractor}_${activeTab}_${sheetName}.xlsx`);
+  };
+
+  const exportToPDF = () => {
+    if (filteredData.length === 0) return alert("No data to export.");
+
+    try {
+      // Set PDF to landscape ('l') to fit all columns without squishing
+      const doc = new jsPDF('l');
+
+      // Professional PDF Header
+      doc.setFontSize(18);
+      doc.setTextColor(15, 23, 42);
+      doc.text("CRM_FIX Financial Report", 14, 22);
+
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Period: ${sheetName}   |   Contractor: ${selectedRecordContractor}   |   View: ${activeTab.toUpperCase()}-WISE`, 14, 30);
+
+      let head = [];
+      let body = [];
+      let foot = [];
+
+      // We remove the Indian Rupee symbol (₹) here and use pure numbers because ₹ crashes basic PDF fonts
+      const formatNum = (num) => Number(num).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+
+      if (activeTab === 'worker') {
+        head = [["Worker Name", "Category", "Total Days", "OT (Hrs)", "Base Pay (Rs)", "OT Pay (Rs)", "Total Payout (Rs)"]];
+        body = filteredData.map(row => [row.worker, row.type, row.regDays, row.otHours, formatNum(row.totalBaseCost), formatNum(row.totalOTCost), formatNum(row.totalBaseCost + row.totalOTCost)]);
+        foot = [["GRAND TOTAL", "", totals.masonReg + totals.halfMasonReg + totals.helperReg, totals.masonOT + totals.halfMasonOT + totals.helperOT, formatNum(totals.totalBaseCost), formatNum(totals.totalOTCost), formatNum(totals.totalBaseCost + totals.totalOTCost)]];
+      } else {
+        head = activeTab === 'day'
+          ? [["Day", "Site", "Mason", "M. OT", "HM", "HM OT", "Helper", "H. OT", "Base Cost", "OT Cost", "Total Cost"]]
+          : [["Site", "Mason", "M. OT", "HM", "HM OT", "Helper", "H. OT", "Base Cost", "OT Cost", "Total Cost"]];
+
+        body = filteredData.map(row => {
+          const r = activeTab === 'day' ? [row.day] : [];
+          r.push(row.site, row.masonReg, row.masonOT, row.halfMasonReg, row.halfMasonOT, row.helperReg, row.helperOT, formatNum(row.totalBaseCost || 0), formatNum(row.totalOTCost || 0), formatNum((row.totalBaseCost || 0) + (row.totalOTCost || 0)));
+          return r;
+        });
+
+        const ft = activeTab === 'day' ? ["GRAND TOTAL", ""] : ["GRAND TOTAL"];
+        ft.push(totals.masonReg, totals.masonOT, totals.halfMasonReg, totals.halfMasonOT, totals.helperReg, totals.helperOT, formatNum(totals.totalBaseCost), formatNum(totals.totalOTCost), formatNum(totals.totalBaseCost + totals.totalOTCost));
+        foot = [ft];
+      }
+
+      // Generate Table
+      autoTable(doc, {
+        startY: 35,
+        head: head,
+        body: body,
+        foot: foot,
+        theme: 'striped',
+        headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
+        footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: 'bold' },
+        styles: { fontSize: 8, cellPadding: 3 },
+      });
+
+      doc.save(`CRM_FIX_${selectedRecordContractor}_${activeTab}_${sheetName}.pdf`);
+    } catch (error) {
+      console.error(error);
+      alert("Error generating PDF. Please check your browser settings.");
+    }
+  };
 
   const handleAttendanceChange = (name, status) => {
     setSupAttendance(prev => ({ ...prev, [name]: { ...prev[name], status: status, ot: status === 'absent' ? '' : prev[name].ot } }));
@@ -666,17 +783,17 @@ export default function App() {
                     </div>
                   </div>
                   <div className={`absolute top-full left-0 mt-2 w-full bg-white border border-gray-100 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] z-50 overflow-hidden transition-all duration-200 origin-top ${isSiteDropdownOpen ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0 pointer-events-none'}`}>
-                    
+
                     {/* Sticky Search Bar */}
                     <div className="p-2 border-b border-gray-50 bg-gray-50/50">
                       <div className="relative">
                         <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input 
-                          type="text" 
-                          placeholder="Search site..." 
-                          value={siteSearchQuery} 
+                        <input
+                          type="text"
+                          placeholder="Search site..."
+                          value={siteSearchQuery}
                           onChange={(e) => setSiteSearchQuery(e.target.value)}
-                          onClick={(e) => e.stopPropagation()} 
+                          onClick={(e) => e.stopPropagation()}
                           className="w-full pl-8 pr-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                         />
                       </div>
@@ -1115,7 +1232,7 @@ export default function App() {
                 <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-100 p-8 md:p-12 text-center max-w-4xl mx-auto mt-8">
                   <h2 className="text-2xl md:text-3xl font-black text-gray-900 mb-2">Select Contractor Team</h2>
                   <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-10">Data Period: {sheetName}</p>
-                  
+
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
                     {/* Maps over all contractors that have actual data saved inside this specific bucket */}
                     {Array.from(new Set([...dynamicContractors, ...workerData.map(w => w.contractor)])).filter(Boolean).map(c => {
@@ -1301,7 +1418,7 @@ export default function App() {
                       {filteredData.length > 0 && (
                         <div className="bg-gray-900 p-5 shadow-[0_-4px_15px_-3px_rgba(0,0,0,0.1)]">
                           <h3 className="text-white font-black text-center text-sm mb-4 tracking-wider">SHEET TOTALS</h3>
-                          
+
                           {activeTab === 'worker' ? (
                             <div className="grid grid-cols-2 gap-2 text-xs mb-3">
                               <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Days</p><p className="text-base font-black text-white">{totals.masonReg + totals.halfMasonReg + totals.helperReg}</p></div>
@@ -1314,7 +1431,7 @@ export default function App() {
                               <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Helper</p><p className="text-base font-black text-white">{totals.helperReg} <span className="text-[10px] text-gray-400">({totals.helperOT}h)</span></p></div>
                             </div>
                           )}
-                          
+
                           <div className="bg-emerald-600 p-4 rounded-xl border border-emerald-500 text-center">
                             <p className="text-emerald-100 font-bold mb-1 uppercase text-[10px] tracking-wider">Grand Financial Total</p>
                             <p className="text-2xl font-black text-white">{formatCurrency(totals.totalBaseCost + totals.totalOTCost)}</p>
