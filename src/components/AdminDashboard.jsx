@@ -4,12 +4,12 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
   Upload, Download, FileText, UploadCloud, LayoutGrid, Search,
-  Save, Trash2, Database, Clock, Check, BarChart3, 
-  LogOut, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, RefreshCw, ClipboardList
+  Save, Trash2, Database, Clock, Check, BarChart3,
+  LogOut, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, RefreshCw, ClipboardList, AlertCircle, CheckCircle, Edit2
 } from 'lucide-react';
-import { collection, getDocs, deleteDoc, doc, setDoc } from "firebase/firestore";
+import { collection, getDocs, deleteDoc, doc, setDoc, updateDoc } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import { db, secondaryAuth } from '../firebase'; 
+import { db, secondaryAuth } from '../firebase';
 
 const getPeriodKey = (dateString) => {
   const d = new Date(dateString);
@@ -47,6 +47,8 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const [dashboardTab, setDashboardTab] = useState('upload');
   const [savedSheets, setSavedSheets] = useState([]);
   const [dailyLogs, setDailyLogs] = useState([]); // NEW: Stores the audit trail
+  const [editRequests, setEditRequests] = useState([]);
+
   const [isSaving, setIsSaving] = useState(false);
   const [hasSavedCurrent, setHasSavedCurrent] = useState(false);
   const [isLoadingRecords, setIsLoadingRecords] = useState(false);
@@ -97,9 +99,19 @@ export default function AdminDashboard({ currentUser, onLogout }) {
         const logsSnap = await getDocs(collection(db, "daily_logs"));
         const logs = [];
         logsSnap.forEach(d => logs.push({ id: d.id, ...d.data() }));
-        logs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)); // Newest first
+        // Sort by edit time if it exists, otherwise use the original creation time
+        logs.sort((a, b) => (b.editTimestamp || b.timestamp || 0) - (a.editTimestamp || a.timestamp || 0));
         setDailyLogs(logs);
       } catch (e) { console.error("Error fetching daily logs:", e); }
+
+      // NEW: Fetch Edit Requests (Permissions Inbox)
+      try {
+        const reqSnap = await getDocs(collection(db, "edit_requests"));
+        const reqs = [];
+        reqSnap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
+        reqs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        setEditRequests(reqs);
+      } catch (e) { console.error("Error fetching edit requests:", e); }
 
       // Fetch master data
       let loadedSites = Array.from(aggregatedSites);
@@ -119,6 +131,16 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  const pendingRequests = editRequests.filter(req => req.status === 'pending');
+
+  const handleApproveEdit = async (reqId) => {
+    try {
+      await updateDoc(doc(db, "edit_requests", reqId), { status: 'approved' });
+      alert("Edit approved! The supervisor can now modify that log.");
+      fetchData(); // Refresh the inbox
+    } catch (err) { alert("Error approving edit."); }
+  };
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
@@ -499,12 +521,12 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       [`Period: ${sheetName}`],
       [`Contractor: ${selectedRecordContractor}`],
       [`View: ${activeTab.toUpperCase()}-WISE`],
-      [] 
+      []
     ];
 
     if (activeTab === 'worker') {
       aoa.push(["Worker Name", "Category", "Total Days", "Total OT (Hrs)", "Base Pay (Rs)", "OT Pay (Rs)", "Total Payout (Rs)"]);
-      
+
       const addCategoryToAOA = (data, catName) => {
         if (data.length === 0) return;
         data.forEach(row => {
@@ -512,7 +534,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
         });
         const sub = calcSubtotals(data);
         aoa.push([`${catName.toUpperCase()} SUBTOTAL`, "", sub.days, sub.ot, sub.base, sub.otPay, sub.base + sub.otPay]);
-        aoa.push([]); 
+        aoa.push([]);
       };
 
       addCategoryToAOA(masonsData, "Mason");
@@ -521,7 +543,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
       aoa.push(["GRAND TOTAL", "", totals.masonReg + totals.halfMasonReg + totals.helperReg, totals.masonOT + totals.halfMasonOT + totals.helperOT, totals.totalBaseCost, totals.totalOTCost, totals.totalBaseCost + totals.totalOTCost]);
     } else {
-      const headers = activeTab === 'day' 
+      const headers = activeTab === 'day'
         ? ["Day", "Site Code", "Mason Days", "Mason OT", "HM Days", "HM OT", "Helper Days", "Helper OT", "Base Cost (Rs)", "OT Cost (Rs)", "Total Site Cost (Rs)"]
         : ["Site Code", "Mason Days", "Mason OT", "HM Days", "HM OT", "Helper Days", "Helper OT", "Base Cost (Rs)", "OT Cost (Rs)", "Total Site Cost (Rs)"];
       aoa.push(headers);
@@ -530,7 +552,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
         r.push(row.site, row.masonReg, row.masonOT, row.halfMasonReg, row.halfMasonOT, row.helperReg, row.helperOT, row.totalBaseCost, row.totalOTCost, row.totalBaseCost + row.totalOTCost);
         aoa.push(r);
       });
-      aoa.push([]); 
+      aoa.push([]);
       const ft = activeTab === 'day' ? ["GRAND TOTAL", ""] : ["GRAND TOTAL"];
       ft.push(totals.masonReg, totals.masonOT, totals.halfMasonReg, totals.halfMasonOT, totals.helperReg, totals.helperOT, totals.totalBaseCost, totals.totalOTCost, totals.totalBaseCost + totals.totalOTCost);
       aoa.push(ft);
@@ -538,7 +560,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = [
-      { wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, 
+      { wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 15 },
       { wch: 15 }, { wch: 20 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 20 }
     ];
     ws['!merges'] = [
@@ -555,13 +577,13 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
   const exportToPDF = () => {
     if (filteredData.length === 0) return alert("No data to export.");
-    
+
     try {
       const doc = new jsPDF('l');
       doc.setFontSize(18);
-      doc.setTextColor(15, 23, 42); 
+      doc.setTextColor(15, 23, 42);
       doc.text("CRM_FIX Financial Report", 14, 22);
-      
+
       doc.setFontSize(10);
       doc.setTextColor(100, 116, 139);
       doc.text(`Period: ${sheetName}   |   Contractor: ${selectedRecordContractor}   |   View: ${activeTab.toUpperCase()}-WISE`, 14, 30);
@@ -574,7 +596,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
       if (activeTab === 'worker') {
         head = [["Worker Name", "Category", "Total Days", "OT (Hrs)", "Base Pay (Rs)", "OT Pay (Rs)", "Total Payout (Rs)"]];
-        
+
         const addCategoryToPDF = (data, catName) => {
           if (data.length === 0) return;
           data.forEach(row => {
@@ -597,10 +619,10 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
         foot = [["GRAND TOTAL", "", (totals.masonReg + totals.halfMasonReg + totals.helperReg).toString(), (totals.masonOT + totals.halfMasonOT + totals.helperOT).toString(), formatNum(totals.totalBaseCost), formatNum(totals.totalOTCost), formatNum(totals.totalBaseCost + totals.totalOTCost)]];
       } else {
-        head = activeTab === 'day' 
+        head = activeTab === 'day'
           ? [["Day", "Site", "Mason", "M. OT", "HM", "HM OT", "Helper", "H. OT", "Base Cost", "OT Cost", "Total Cost"]]
           : [["Site", "Mason", "M. OT", "HM", "HM OT", "Helper", "H. OT", "Base Cost", "OT Cost", "Total Cost"]];
-        
+
         body = filteredData.map(row => {
           const r = activeTab === 'day' ? [row.day] : [];
           r.push(row.site, row.masonReg, row.masonOT, row.halfMasonReg, row.halfMasonOT, row.helperReg, row.helperOT, formatNum(row.totalBaseCost || 0), formatNum(row.totalOTCost || 0), formatNum((row.totalBaseCost || 0) + (row.totalOTCost || 0)));
@@ -634,10 +656,10 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   // --- TEAM MANAGEMENT ACTION ---
   const handleCreateSupervisor = async (e) => {
     e.preventDefault();
-    if(!newSupEmail || !newSupPassword) return;
+    if (!newSupEmail || !newSupPassword) return;
     setIsCreatingSup(true);
     setTeamMessage({ text: "Authorizing secure link...", type: "loading" });
-    
+
     try {
       await createUserWithEmailAndPassword(secondaryAuth, newSupEmail, newSupPassword);
       await setDoc(doc(db, "supervisors", newSupEmail.toLowerCase()), {
@@ -702,7 +724,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     const sub = calcSubtotals(data);
     return (
       <div className={`${colorClass} p-3 flex justify-between items-center shadow-inner`}>
-        <div className="text-[9px] font-black uppercase tracking-widest">{label} SUBTOTAL<br/><span className="opacity-70">{sub.days} Days | {sub.ot}h OT</span></div>
+        <div className="text-[9px] font-black uppercase tracking-widest">{label} SUBTOTAL<br /><span className="opacity-70">{sub.days} Days | {sub.ot}h OT</span></div>
         <div className="text-sm font-black">{formatCurrency(sub.base + sub.otPay)}</div>
       </div>
     );
@@ -745,6 +767,10 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                 </button>
                 <button onClick={() => setDashboardTab('logs')} className={`flex-1 sm:flex-none px-2 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-full font-bold text-[10px] sm:text-sm transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2.5 ${dashboardTab === 'logs' ? 'bg-white text-orange-600 shadow-sm border border-gray-50' : 'text-gray-500 hover:text-gray-700'}`}>
                   <ClipboardList className={`w-5 h-5 sm:w-4 sm:h-4 ${dashboardTab === 'logs' ? 'text-orange-600' : 'text-gray-400'}`} /> <span className="text-center leading-tight">Logs</span>
+                </button>
+                <button onClick={() => setDashboardTab('approvals')} className={`flex-1 sm:flex-none px-2 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-full font-bold text-[10px] sm:text-sm transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2.5 relative ${dashboardTab === 'approvals' ? 'bg-white text-rose-600 shadow-sm border border-gray-50' : 'text-gray-500 hover:text-gray-700'}`}>
+                  <AlertCircle className={`w-5 h-5 sm:w-4 sm:h-4 ${dashboardTab === 'approvals' ? 'text-rose-600' : 'text-gray-400'}`} /> <span className="text-center leading-tight">Approvals</span>
+                  {pendingRequests.length > 0 && <span className="absolute top-1 right-1 sm:top-2 sm:right-2 w-2 h-2 rounded-full bg-red-500"></span>}
                 </button>
                 <button onClick={() => setDashboardTab('team')} className={`flex-1 sm:flex-none px-2 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-full font-bold text-[10px] sm:text-sm transition-all flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2.5 ${dashboardTab === 'team' ? 'bg-white text-purple-600 shadow-sm border border-gray-50' : 'text-gray-500 hover:text-gray-700'}`}>
                   <Users className={`w-5 h-5 sm:w-4 sm:h-4 ${dashboardTab === 'team' ? 'text-purple-600' : 'text-gray-400'}`} /> <span className="text-center leading-tight">Team</span>
@@ -997,29 +1023,35 @@ export default function AdminDashboard({ currentUser, onLogout }) {
               <div className="max-w-4xl mx-auto">
                 <div className="bg-white rounded-[2rem] p-6 md:p-8 shadow-sm border border-gray-100">
                   <h2 className="text-xl md:text-2xl font-black text-gray-900 mb-6 flex items-center gap-2">
-                    <Clock className="w-6 h-6 text-orange-500"/> Audit Logs & Submissions
+                    <Clock className="w-6 h-6 text-orange-500" /> Audit Logs & Submissions
                   </h2>
-                  
+
                   <div className="space-y-3 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
                     {dailyLogs.length === 0 ? (
                       <p className="text-center text-gray-500 py-8 font-medium">No attendance logs found.</p>
                     ) : (
                       dailyLogs.map(log => (
-                        <div key={log.id} className="bg-gray-50 p-4 rounded-2xl border border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div key={log.id} className={`p-4 rounded-2xl border flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-colors ${log.isEdited ? 'bg-yellow-50/50 border-yellow-200 shadow-[inset_0_0_0_1px_rgba(250,204,21,0.2)]' : 'bg-gray-50 border-gray-100'}`}>
                           <div>
                             <div className="flex items-center gap-2 mb-1">
                               <span className="bg-orange-100 text-orange-700 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider">
                                 {new Date(log.timestamp).toLocaleString()}
                               </span>
-                              <span className="font-bold text-gray-900 text-sm">{log.site}</span>
+                              {log.isEdited && (
+                                <span className="bg-yellow-400 text-yellow-900 text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider flex items-center gap-1">
+                                  <Edit2 className="w-2.5 h-2.5" /> EDITED
+                                </span>
+                              )}
+                              <span className="font-bold text-gray-900 text-sm ml-1">{log.site}</span>
                             </div>
                             <p className="text-xs text-gray-500 font-bold flex items-center gap-1">
-                              <Users className="w-3 h-3"/> {log.contractor}'s Team <span className="text-gray-300 mx-1">|</span> {log.workers?.length || 0} Workers Logged
+                              <Users className="w-3 h-3" /> {log.contractor}'s Team <span className="text-gray-300 mx-1">|</span> {log.workers?.length || 0} Workers Logged
                             </p>
                           </div>
-                          <div className="bg-white px-3 py-2 rounded-xl border border-gray-200 text-right w-full md:w-auto">
+                          <div className={`px-3 py-2 rounded-xl border text-right w-full md:w-auto ${log.isEdited ? 'bg-white border-yellow-200' : 'bg-white border-gray-200'}`}>
                             <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-0.5">Submitted By</p>
                             <p className="text-xs font-bold text-blue-600">{log.submittedBy || "Unknown"}</p>
+                            {log.editTimestamp && <p className="text-[8px] text-yellow-600 font-bold mt-0.5">Edited: {new Date(log.editTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>}
                           </div>
                         </div>
                       ))
@@ -1029,7 +1061,59 @@ export default function AdminDashboard({ currentUser, onLogout }) {
               </div>
             )}
 
-            {/* TAB 5: SECURE TEAM MANAGEMENT */}
+            {/* TAB 5: EDIT APPROVALS INBOX (NEW) */}
+            {dashboardTab === 'approvals' && (
+              <div className="max-w-4xl mx-auto">
+                <div className="bg-white rounded-[2rem] p-6 md:p-8 shadow-sm border border-gray-100">
+                  <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-xl md:text-2xl font-black text-gray-900 flex items-center gap-2">
+                      <AlertCircle className="w-6 h-6 text-rose-500" /> Permissions Inbox
+                    </h2>
+                    <span className="bg-rose-100 text-rose-700 text-xs font-black px-3 py-1 rounded-full uppercase tracking-wider">
+                      {pendingRequests.length} Pending
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {editRequests.length === 0 ? (
+                      <p className="text-center text-gray-500 py-8 font-medium">No edit requests found.</p>
+                    ) : (
+                      editRequests.map(req => (
+                        <div key={req.id} className={`p-4 rounded-2xl border flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-colors ${req.status === 'pending' ? 'bg-white border-rose-200 shadow-[0_4px_15px_-3px_rgba(244,63,94,0.1)]' : 'bg-gray-50 border-gray-100 opacity-60'}`}>
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-black text-gray-900 text-sm">{req.site}</span>
+                              <span className="text-gray-400 font-bold text-xs uppercase tracking-wider">| {req.date}</span>
+                            </div>
+                            <p className="text-xs text-gray-500 font-bold flex items-center gap-1">
+                              <Clock className="w-3 h-3" /> Requested by <span className="text-blue-600">{req.submittedBy}</span>
+                            </p>
+                          </div>
+
+                          <div className="w-full md:w-auto flex items-center justify-end">
+                            {req.status === 'pending' ? (
+                              <button onClick={() => handleApproveEdit(req.id)} className="w-full md:w-auto px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded-xl transition-colors flex items-center justify-center gap-2 shadow-sm">
+                                <CheckCircle className="w-4 h-4" /> Approve Edit Unlock
+                              </button>
+                            ) : req.status === 'approved' ? (
+                              <span className="px-4 py-2 bg-emerald-50 text-emerald-700 font-black text-xs rounded-xl flex items-center gap-1.5 border border-emerald-100">
+                                <Check className="w-3.5 h-3.5" /> Approved
+                              </span>
+                            ) : (
+                              <span className="px-4 py-2 bg-gray-100 text-gray-500 font-black text-xs rounded-xl flex items-center gap-1.5 border border-gray-200">
+                                <Check className="w-3.5 h-3.5" /> Used & Resolved
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 6: SECURE TEAM MANAGEMENT */}
             {dashboardTab === 'team' && (
               <div className="max-w-2xl mx-auto">
                 <div className="bg-white rounded-[2.5rem] p-8 md:p-12 shadow-sm border border-gray-100 text-center">
@@ -1038,42 +1122,41 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                   </div>
                   <h2 className="text-2xl font-black text-gray-900 mb-2">Team Management</h2>
                   <p className="text-sm font-medium text-gray-500 mb-8">Authorize specific emails to access the Supervisor Field Portal.</p>
-                  
+
                   <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6 text-left">
                     <h3 className="text-sm font-bold text-gray-800 mb-4">Add New Supervisor Route</h3>
                     <form onSubmit={handleCreateSupervisor} className="space-y-4">
-                      <input 
-                        type="text" 
-                        value={newSupName} 
-                        onChange={(e) => setNewSupName(e.target.value)} 
-                        placeholder="Supervisor Name (e.g., Laljeet)" 
-                        required 
-                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all" 
+                      <input
+                        type="text"
+                        value={newSupName}
+                        onChange={(e) => setNewSupName(e.target.value)}
+                        placeholder="Supervisor Name (e.g., Laljeet)"
+                        required
+                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all"
                       />
-                      <input 
-                        type="email" 
-                        value={newSupEmail} 
-                        onChange={(e) => setNewSupEmail(e.target.value)} 
-                        placeholder="Supervisor Email" 
-                        required 
-                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all" 
+                      <input
+                        type="email"
+                        value={newSupEmail}
+                        onChange={(e) => setNewSupEmail(e.target.value)}
+                        placeholder="Supervisor Email"
+                        required
+                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all"
                       />
-                      <input 
-                        type="password" 
-                        value={newSupPassword} 
-                        onChange={(e) => setNewSupPassword(e.target.value)} 
-                        placeholder="Create Password (min 6 characters)" 
-                        required 
+                      <input
+                        type="password"
+                        value={newSupPassword}
+                        onChange={(e) => setNewSupPassword(e.target.value)}
+                        placeholder="Create Password (min 6 characters)"
+                        required
                         minLength={6}
-                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all" 
+                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all"
                       />
-                      
+
                       {teamMessage.text && (
-                        <p className={`text-xs font-bold text-center py-2 rounded-lg ${
-                          teamMessage.type === 'error' ? 'text-red-500 bg-red-50' : 
-                          teamMessage.type === 'loading' ? 'text-blue-500 bg-blue-50' : 
-                          'text-emerald-600 bg-emerald-50'
-                        }`}>
+                        <p className={`text-xs font-bold text-center py-2 rounded-lg ${teamMessage.type === 'error' ? 'text-red-500 bg-red-50' :
+                          teamMessage.type === 'loading' ? 'text-blue-500 bg-blue-50' :
+                            'text-emerald-600 bg-emerald-50'
+                          }`}>
                           {teamMessage.text}
                         </p>
                       )}
@@ -1112,7 +1195,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
               <div className="bg-white rounded-[2.5rem] shadow-sm border border-gray-100 p-8 md:p-12 text-center max-w-4xl mx-auto mt-8">
                 <h2 className="text-2xl md:text-3xl font-black text-gray-900 mb-2">Select Contractor Team</h2>
                 <p className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-10">Data Period: {sheetName}</p>
-                
+
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
                   {Array.from(new Set([...dynamicContractors, ...workerData.map(w => w.contractor)])).filter(Boolean).map(c => {
                     const hasData = workerData.some(w => w.contractor === c);
@@ -1317,7 +1400,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                     {filteredData.length > 0 && (
                       <div className="bg-gray-900 p-5 shadow-[0_-4px_15px_-3px_rgba(0,0,0,0.1)]">
                         <h3 className="text-white font-black text-center text-sm mb-4 tracking-wider">SHEET TOTALS</h3>
-                        
+
                         {activeTab === 'worker' ? (
                           <div className="grid grid-cols-2 gap-2 text-xs mb-3">
                             <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Days</p><p className="text-base font-black text-white">{totals.masonReg + totals.halfMasonReg + totals.helperReg}</p></div>
@@ -1330,7 +1413,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                             <div className="bg-gray-800/80 p-3 rounded-xl"><p className="text-gray-400 font-bold mb-0.5 uppercase text-[9px]">Total Helper</p><p className="text-base font-black text-white">{totals.helperReg} <span className="text-[10px] text-gray-400">({totals.helperOT}h)</span></p></div>
                           </div>
                         )}
-                        
+
                         <div className="bg-emerald-600 p-4 rounded-xl border border-emerald-500 text-center">
                           <p className="text-emerald-100 font-bold mb-1 uppercase text-[10px] tracking-wider">Grand Financial Total</p>
                           <p className="text-2xl font-black text-white">{formatCurrency(totals.totalBaseCost + totals.totalOTCost)}</p>
