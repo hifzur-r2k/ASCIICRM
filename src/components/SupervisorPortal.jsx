@@ -97,6 +97,17 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
   // Also refresh when switching to history tab
   useEffect(() => { if (activePortalTab === 'history') fetchHistoryData(); }, [activePortalTab]);
 
+  // FIX 5: Prevent Back Gesture from exiting the web app
+  useEffect(() => {
+    window.history.pushState({ noBackExitsApp: true }, '');
+    const handlePopState = (e) => {
+      window.history.pushState({ noBackExitsApp: true }, '');
+      if (activePortalTab !== 'attendance') setActivePortalTab('attendance');
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [activePortalTab]);
+
   useEffect(() => {
     if (supContractor && !editingLog) {
       const contractorWorkers = masterWorkers.filter(w => w.contractor === supContractor);
@@ -246,7 +257,13 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
 
       // UPDATE AUDIT TRAIL AND CONSUME APPROVAL
       if (editingLog) {
-        await updateDoc(doc(db, "daily_logs", editingLog.id), { workers: logWorkers, isEdited: true, editTimestamp: Date.now() });
+        const newEditCount = (editingLog.editCount || 0) + 1; // FIX 1 & 2: Track count
+        await updateDoc(doc(db, "daily_logs", editingLog.id), {
+          workers: logWorkers,
+          isEdited: true,
+          editTimestamp: Date.now(),
+          editCount: newEditCount
+        });
 
         // FIX: Close ALL pending and approved requests for this log so it doesn't get stuck on "Edit Pending..."
         if (!isToday(editingLog.date)) {
@@ -477,10 +494,12 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                 </div>
               ) : (
                 myLogs.map(log => {
-                  // FIX 3: Advanced Permission checks logic
                   const approvedReq = myRequests.find(r => r.logId === log.id && r.status === 'approved');
                   const pendingReq = myRequests.find(r => r.logId === log.id && r.status === 'pending');
-                  const canEdit = isToday(log.date) || approvedReq;
+
+                  // FIX 1: Restrict free edits to 3 maximum. After that, they must request approval.
+                  const editCount = log.editCount || 0;
+                  const canEdit = (isToday(log.date) && editCount < 3) || approvedReq;
 
                   return (
                     <div key={log.id} className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-emerald-200 transition-colors">
@@ -489,7 +508,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                           <span className="bg-emerald-100 text-emerald-700 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider">
                             {log.date}
                           </span>
-                          {log.isEdited && <span className="bg-yellow-100 text-yellow-800 text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">Edited</span>}
+                          {log.isEdited && <span className="bg-yellow-100 text-yellow-800 text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">Edited {editCount > 0 ? `(${editCount}/3)` : ''}</span>}
                           {log.timestamp && <span className="text-[10px] text-gray-400 font-bold ml-1">{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
                         </div>
                         <h4 className="font-black text-gray-900 text-base">{log.site}</h4>

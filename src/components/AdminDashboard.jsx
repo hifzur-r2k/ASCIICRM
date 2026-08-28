@@ -5,7 +5,7 @@ import autoTable from 'jspdf-autotable';
 import {
   Upload, Download, FileText, UploadCloud, LayoutGrid, Search,
   Save, Trash2, Database, Clock, Check, BarChart3,
-  LogOut, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, RefreshCw, ClipboardList, AlertCircle, CheckCircle, Edit2
+  LogOut, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, RefreshCw, ClipboardList, AlertCircle, CheckCircle, Edit2, Eye, EyeOff
 } from 'lucide-react';
 import { collection, getDocs, deleteDoc, doc, setDoc, updateDoc } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
@@ -66,7 +66,11 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const [newSupEmail, setNewSupEmail] = useState("");
   const [newSupPassword, setNewSupPassword] = useState("");
   const [teamMessage, setTeamMessage] = useState({ text: "", type: "" });
-  const [isCreatingSup, setIsCreatingSup] = useState(false);
+  
+  const[isCreatingSup, setIsCreatingSup] = useState(false);
+  const [newSiteCode, setNewSiteCode] = useState("");
+  const [loadedSheetId, setLoadedSheetId] = useState(null); // FIX 4: Track exact sheet for deletion
+  const [showPassword, setShowPassword] = useState(false); // FIX 6: Toggle password visibility
 
   const defaultContractors = ["Arvind", "Laljeet", "Deepak"];
   const dynamicContractors = Array.from(new Set([...defaultContractors, ...masterWorkers.map(w => w.contractor)])).filter(Boolean);
@@ -99,8 +103,14 @@ export default function AdminDashboard({ currentUser, onLogout }) {
         const logsSnap = await getDocs(collection(db, "daily_logs"));
         const logs = [];
         logsSnap.forEach(d => logs.push({ id: d.id, ...d.data() }));
-        // Sort by edit time if it exists, otherwise use the original creation time
-        logs.sort((a, b) => (b.editTimestamp || b.timestamp || 0) - (a.editTimestamp || a.timestamp || 0));
+
+        // FIX 3: Sort strictly by Date first, then by submission time
+        logs.sort((a, b) => {
+          const dateA = new Date(a.date).getTime() || 0;
+          const dateB = new Date(b.date).getTime() || 0;
+          if (dateB !== dateA) return dateB - dateA;
+          return (b.timestamp || 0) - (a.timestamp || 0);
+        });
         setDailyLogs(logs);
       } catch (e) { console.error("Error fetching daily logs:", e); }
 
@@ -122,6 +132,11 @@ export default function AdminDashboard({ currentUser, onLogout }) {
           if (docSnap.id === "sites" && docSnap.data().list) loadedSites = Array.from(new Set([...loadedSites, ...docSnap.data().list]));
           if (docSnap.id === "workers" && docSnap.data().list) loadedWorkers = docSnap.data().list;
         });
+
+        // FIX: The Admin automatically pushes a safe, public list of sites for the supervisors
+        if (loadedSites.length > 0) {
+          await setDoc(doc(db, "master_data", "sites"), { list: loadedSites });
+        }
       } catch (err) { console.warn("master_data missing:", err); }
 
       setMasterSites(loadedSites.sort());
@@ -131,6 +146,14 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  // FIX 5: Prevent Back Gesture from exiting app
+  useEffect(() => {
+    window.history.pushState({ noBackExitsApp: true }, '');
+    const handlePopState = (e) => window.history.pushState({ noBackExitsApp: true }, '');
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   const pendingRequests = editRequests.filter(req => req.status === 'pending');
 
@@ -386,7 +409,27 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     } catch (error) { console.error("Error deleting:", error); }
   };
 
+  // FIX 4: Delete a specific contractor's data without deleting the whole 15-day bucket
+  const deleteContractorRecord = async (contractorName, e) => {
+    e.stopPropagation();
+    if (!window.confirm(`Are you sure you want to PERMANENTLY DELETE all records for ${contractorName} from this 15-day sheet?`)) return;
+    try {
+      const newSiteData = siteData.filter(s => s.contractor !== contractorName);
+      const newDayData = dayData.filter(d => d.contractor !== contractorName);
+      const newWorkerData = workerData.filter(w => w.contractor !== contractorName);
+
+      await updateDoc(doc(db, "attendance_sheets", loadedSheetId), {
+        siteData: newSiteData, dayData: newDayData, workerData: newWorkerData, updatedAt: Date.now()
+      });
+
+      setSiteData(newSiteData); setDayData(newDayData); setWorkerData(newWorkerData);
+      alert(`Successfully deleted ${contractorName}'s records.`);
+      if (newWorkerData.length === 0) goHome(); // If bucket is empty now, exit to home
+    } catch (error) { alert("Error deleting contractor."); }
+  };
+
   const loadSavedRecord = (sheet) => {
+    setLoadedSheetId(sheet.id); // Track ID
     setSheetName(sheet.sheetName); setSheetMonth(sheet.id.substring(0, 7));
     setSiteData(sheet.siteData || []); setDayData(sheet.dayData || []); setWorkerData(sheet.workerData || []);
     setHasSavedCurrent(true); setSearchQuery(""); setSelectedRecordContractor(null);
@@ -675,6 +718,22 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       setTeamMessage({ text: error.message, type: "error" });
     }
     setIsCreatingSup(false);
+  };
+
+  // --- SITE MANAGEMENT ACTION ---
+  const handleAddNewSite = async (e) => {
+    e.preventDefault();
+    const code = newSiteCode.trim().toUpperCase();
+    if (!code) return;
+    if (masterSites.includes(code)) return alert(`Site ${code} already exists!`);
+
+    const updatedSites = [...masterSites, code].sort();
+    try {
+      await setDoc(doc(db, "master_data", "sites"), { list: updatedSites });
+      setMasterSites(updatedSites);
+      setNewSiteCode("");
+      alert(`Success! Site ${code} is now live for all supervisors.`);
+    } catch (err) { alert("Error pushing new site to cloud."); }
   };
 
   const renderDesktopWorkerRow = (row, idx) => (
@@ -1039,7 +1098,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                               </span>
                               {log.isEdited && (
                                 <span className="bg-yellow-400 text-yellow-900 text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider flex items-center gap-1">
-                                  <Edit2 className="w-2.5 h-2.5" /> EDITED
+                                  <Edit2 className="w-2.5 h-2.5" /> EDITED {log.editCount ? `(${log.editCount})` : ''}
                                 </span>
                               )}
                               <span className="font-bold text-gray-900 text-sm ml-1">{log.site}</span>
@@ -1142,15 +1201,21 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                         required
                         className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all"
                       />
-                      <input
-                        type="password"
-                        value={newSupPassword}
-                        onChange={(e) => setNewSupPassword(e.target.value)}
-                        placeholder="Create Password (min 6 characters)"
-                        required
-                        minLength={6}
-                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all"
-                      />
+                      {/* FIX 6: Password visibility toggle */}
+                      <div className="relative w-full">
+                        <input
+                          type={showPassword ? "text" : "password"}
+                          value={newSupPassword}
+                          onChange={(e) => setNewSupPassword(e.target.value)}
+                          placeholder="Create Password (min 6 characters)"
+                          required
+                          minLength={6}
+                          className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all pr-12"
+                        />
+                        <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-purple-600 outline-none">
+                          {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                        </button>
+                      </div>
 
                       {teamMessage.text && (
                         <p className={`text-xs font-bold text-center py-2 rounded-lg ${teamMessage.type === 'error' ? 'text-red-500 bg-red-50' :
@@ -1166,6 +1231,25 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                       </button>
                     </form>
                   </div>
+
+                  {/* NEW: ADD SITE FORM */}
+                  <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6 text-left mt-6">
+                    <h3 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2"><Layers className="w-4 h-4 text-emerald-500" /> Create New Site Code</h3>
+                    <form onSubmit={handleAddNewSite} className="flex flex-col sm:flex-row gap-3">
+                      <input
+                        type="text"
+                        value={newSiteCode}
+                        onChange={(e) => setNewSiteCode(e.target.value)}
+                        placeholder="New Site Code (e.g. S05, CITY-MALL)"
+                        required
+                        className="w-full sm:flex-1 px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all uppercase"
+                      />
+                      <button type="submit" className="w-full sm:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-colors flex items-center justify-center gap-2">
+                        <Plus className="w-4 h-4" /> Add Site
+                      </button>
+                    </form>
+                  </div>
+
                 </div>
               </div>
             )}
@@ -1206,6 +1290,13 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                         </div>
                         <h3 className="text-lg font-black text-gray-900">{c}</h3>
                         <p className="text-[10px] font-bold uppercase tracking-widest mt-1 text-gray-400">{hasData ? 'View Analytics' : 'No Data'}</p>
+
+                        {/* FIX 4: Individual Sheet Delete Button */}
+                        {hasData && loadedSheetId && (
+                          <button onClick={(e) => deleteContractorRecord(c, e)} className="absolute top-4 right-4 p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all shadow-sm" title="Delete Contractor Data">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     )
                   })}
