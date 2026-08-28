@@ -66,9 +66,10 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const [newSupEmail, setNewSupEmail] = useState("");
   const [newSupPassword, setNewSupPassword] = useState("");
   const [teamMessage, setTeamMessage] = useState({ text: "", type: "" });
-  
-  const[isCreatingSup, setIsCreatingSup] = useState(false);
+
+  const [isCreatingSup, setIsCreatingSup] = useState(false);
   const [newSiteCode, setNewSiteCode] = useState("");
+  const [newSiteName, setNewSiteName] = useState("");
   const [loadedSheetId, setLoadedSheetId] = useState(null); // FIX 4: Track exact sheet for deletion
   const [showPassword, setShowPassword] = useState(false); // FIX 6: Toggle password visibility
 
@@ -124,22 +125,33 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       } catch (e) { console.error("Error fetching edit requests:", e); }
 
       // Fetch master data
-      let loadedSites = Array.from(aggregatedSites);
       let loadedWorkers = [];
+      let finalSitesArray = [];
       try {
         const masterSnap = await getDocs(collection(db, "master_data"));
+        const siteMap = new Map();
+
+        // 1. Add raw codes from the Excel buckets first
+        aggregatedSites.forEach(code => siteMap.set(code, code));
+
+        // 2. Overwrite with rich names from the database if they exist
         masterSnap.forEach(docSnap => {
-          if (docSnap.id === "sites" && docSnap.data().list) loadedSites = Array.from(new Set([...loadedSites, ...docSnap.data().list]));
+          if (docSnap.id === "sites" && docSnap.data().list) {
+            docSnap.data().list.forEach(siteString => {
+              const code = siteString.includes('|') ? siteString.split('|')[0] : siteString;
+              siteMap.set(code, siteString); // Upgrades raw code to full name
+            });
+          }
           if (docSnap.id === "workers" && docSnap.data().list) loadedWorkers = docSnap.data().list;
         });
 
-        // FIX: The Admin automatically pushes a safe, public list of sites for the supervisors
-        if (loadedSites.length > 0) {
-          await setDoc(doc(db, "master_data", "sites"), { list: loadedSites });
+        finalSitesArray = Array.from(siteMap.values()).sort();
+        if (finalSitesArray.length > 0) {
+          await setDoc(doc(db, "master_data", "sites"), { list: finalSitesArray });
         }
       } catch (err) { console.warn("master_data missing:", err); }
 
-      setMasterSites(loadedSites.sort());
+      setMasterSites(finalSitesArray);
       setMasterWorkers(loadedWorkers);
     } catch (error) { console.error("Error fetching data:", error); }
     setIsLoadingRecords(false);
@@ -721,18 +733,25 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   };
 
   // --- SITE MANAGEMENT ACTION ---
+  // --- SITE MANAGEMENT ACTION ---
   const handleAddNewSite = async (e) => {
     e.preventDefault();
     const code = newSiteCode.trim().toUpperCase();
+    const name = newSiteName.trim();
     if (!code) return;
-    if (masterSites.includes(code)) return alert(`Site ${code} already exists!`);
 
-    const updatedSites = [...masterSites, code].sort();
+    const finalSiteString = name ? `${code}|${name}` : code;
+
+    // FIX: Instead of blocking it, we filter out the old raw code and UPGRADE it!
+    const filteredSites = masterSites.filter(s => (s.includes('|') ? s.split('|')[0] : s) !== code);
+    const updatedSites = [...filteredSites, finalSiteString].sort();
+
     try {
       await setDoc(doc(db, "master_data", "sites"), { list: updatedSites });
       setMasterSites(updatedSites);
       setNewSiteCode("");
-      alert(`Success! Site ${code} is now live for all supervisors.`);
+      setNewSiteName("");
+      alert(`Success! Site ${code} has been updated to "${name || code}".`);
     } catch (err) { alert("Error pushing new site to cloud."); }
   };
 
@@ -1234,15 +1253,22 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
                   {/* NEW: ADD SITE FORM */}
                   <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6 text-left mt-6">
-                    <h3 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2"><Layers className="w-4 h-4 text-emerald-500" /> Create New Site Code</h3>
+                    <h3 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2"><Layers className="w-4 h-4 text-emerald-500" /> Create New Site</h3>
                     <form onSubmit={handleAddNewSite} className="flex flex-col sm:flex-row gap-3">
                       <input
                         type="text"
                         value={newSiteCode}
                         onChange={(e) => setNewSiteCode(e.target.value)}
-                        placeholder="New Site Code (e.g. S05, CITY-MALL)"
+                        placeholder="Short Code (e.g. BN)"
                         required
-                        className="w-full sm:flex-1 px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all uppercase"
+                        className="w-full sm:flex-[0.5] px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all uppercase"
+                      />
+                      <input
+                        type="text"
+                        value={newSiteName}
+                        onChange={(e) => setNewSiteName(e.target.value)}
+                        placeholder="Full Site Name (e.g. By Nature Project)"
+                        className="w-full sm:flex-1 px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
                       />
                       <button type="submit" className="w-full sm:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md transition-colors flex items-center justify-center gap-2">
                         <Plus className="w-4 h-4" /> Add Site

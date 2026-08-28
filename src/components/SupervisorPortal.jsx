@@ -19,12 +19,22 @@ const getPeriodKey = (dateString) => {
   return { id: `${year}-${month}-${half}`, displayName: `${displayMonth} ${displayRange} ${year}` };
 };
 
+// --- NEW: Helper Functions for Site Names ---
+const getSiteCode = (siteStr) => siteStr.includes('|') ? siteStr.split('|')[0] : siteStr;
+const getSiteDisplay = (siteStr) => {
+  if (siteStr.includes('|')) {
+    const parts = siteStr.split('|');
+    return `${parts[1]} (${parts[0]})`; // Returns "Full Name (CODE)"
+  }
+  return siteStr;
+};
+
 export default function SupervisorPortal({ currentUser, onLogout }) {
   const [activePortalTab, setActivePortalTab] = useState('attendance');
   const [masterSites, setMasterSites] = useState([]);
   const [masterWorkers, setMasterWorkers] = useState([]);
   const [myLogs, setMyLogs] = useState([]);
-  const [myRequests, setMyRequests] = useState([]); // NEW: Tracks approvals
+  const [myRequests, setMyRequests] = useState([]); // Tracks approvals
 
   // Attendance Form States
   const [supDate, setSupDate] = useState(new Date().toISOString().split('T')[0]);
@@ -92,12 +102,10 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
     } catch (err) { console.error("Error fetching history data:", err); }
   };
 
-  // Run immediately so the app knows if they submitted today for the warning banner
   useEffect(() => { fetchHistoryData(); }, [currentUser]);
-  // Also refresh when switching to history tab
   useEffect(() => { if (activePortalTab === 'history') fetchHistoryData(); }, [activePortalTab]);
 
-  // FIX 5: Prevent Back Gesture from exiting the web app
+  // Prevent Back Gesture from exiting the web app
   useEffect(() => {
     window.history.pushState({ noBackExitsApp: true }, '');
     const handlePopState = (e) => {
@@ -149,7 +157,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
   const helpers = sortWorkers(searchedWorkers.filter(w => w.type === 'Helper'));
   const isToday = (dateStr) => dateStr === new Date().toISOString().split('T')[0];
 
-  // --- SMART OVERDUE ALERTS ---
   const currentHour = new Date().getHours();
   const hasSubmittedToday = myLogs.some(log => isToday(log.date));
   const isOverdue = !hasSubmittedToday && currentHour >= 12;
@@ -255,9 +262,8 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
         transaction.set(sheetRef, { sheetName: period.displayName, siteData: currentSiteData, dayData: currentDayData, workerData: currentWorkerData, updatedAt: Date.now() });
       });
 
-      // UPDATE AUDIT TRAIL AND CONSUME APPROVAL
       if (editingLog) {
-        const newEditCount = (editingLog.editCount || 0) + 1; // FIX 1 & 2: Track count
+        const newEditCount = (editingLog.editCount || 0) + 1;
         await updateDoc(doc(db, "daily_logs", editingLog.id), {
           workers: logWorkers,
           isEdited: true,
@@ -265,7 +271,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
           editCount: newEditCount
         });
 
-        // FIX: Close ALL pending and approved requests for this log so it doesn't get stuck on "Edit Pending..."
         if (!isToday(editingLog.date)) {
           const reqsToClose = myRequests.filter(r => r.logId === editingLog.id && (r.status === 'approved' || r.status === 'pending'));
           for (const req of reqsToClose) {
@@ -352,6 +357,10 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
     );
   };
 
+  // --- NEW: Calculate the display name for the Site Dropdown button ---
+  const selectedSiteFull = masterSites.find(s => getSiteCode(s) === supSite);
+  const displaySelectedSite = selectedSiteFull ? getSiteDisplay(selectedSiteFull) : (supSite || 'Choose Site...');
+
   return (
     <div className="min-h-screen bg-[#f8fafc] text-gray-800 font-sans selection:bg-emerald-100 selection:text-emerald-900 pb-20">
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex justify-between items-center shadow-sm sticky top-0 z-50">
@@ -363,7 +372,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
           <div className="flex items-center bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold shadow-inner">
             <HardHat className="w-3.5 h-3.5 mr-1" /> {currentUser?.email?.split('@')[0]}
           </div>
-          {/* NEW: Refresh Button */}
           <button onClick={() => window.location.reload()} className="text-xs font-bold bg-gray-100 hover:bg-blue-50 hover:text-blue-600 text-gray-600 p-2 rounded-xl transition-colors" title="Sync Data">
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -373,7 +381,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
         </div>
       </header>
 
-      {/* NEW: OVERDUE WARNING BANNER */}
       {isOverdue && !editingLog && (
         <div className="bg-red-500 text-white text-[10px] md:text-xs font-black text-center py-2.5 px-4 shadow-md animate-pulse flex items-center justify-center gap-1.5">
           <AlertCircle className="w-4 h-4" /> {overdueMessage}
@@ -382,7 +389,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
 
       {activePortalTab === 'attendance' ? (
         <div className="max-w-3xl mx-auto pt-4 md:pt-8 px-2 md:px-4 space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          {/* FIX 1: Removed overflow-hidden from this div so dropdowns can escape! */}
           <div className={`bg-white rounded-[1.5rem] md:rounded-[2rem] p-4 md:p-8 shadow-sm border ${editingLog ? 'border-yellow-400 shadow-yellow-100' : 'border-gray-100'} space-y-4 md:space-y-6 relative`}>
 
             {editingLog && (
@@ -406,7 +412,8 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                   {isSiteDropdownOpen && <div className="fixed inset-0 z-40" onClick={() => setIsSiteDropdownOpen(false)}></div>}
                   <div className={`w-full ${editingLog ? 'bg-gray-100 cursor-not-allowed' : 'bg-gray-50 hover:bg-white cursor-pointer'} border border-gray-200 pl-10 pr-10 py-3 rounded-xl text-sm font-black text-gray-800 shadow-sm transition-all relative z-50 flex items-center`} onClick={() => { if (!editingLog) { setIsSiteDropdownOpen(!isSiteDropdownOpen); setIsTeamDropdownOpen(false); setSiteSearchQuery(""); } }}>
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none"><MapPin className={`h-4 w-4 ${supSite ? 'text-emerald-500' : 'text-gray-400'}`} /></div>
-                    <span className={supSite ? 'text-gray-900 truncate' : 'text-gray-400'}>{supSite || 'Choose Site...'}</span>
+                    {/* NEW: Displays the full decoded name */}
+                    <span className={supSite ? 'text-gray-900 truncate' : 'text-gray-400'}>{displaySelectedSite}</span>
                     <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none"><ChevronDown className={`h-4 w-4 transition-transform duration-200 ${isSiteDropdownOpen ? 'rotate-180 text-emerald-500' : 'text-gray-400'}`} /></div>
                   </div>
                   <div className={`absolute top-[calc(100%+8px)] left-0 w-full bg-white border border-gray-100 rounded-xl shadow-xl z-[60] overflow-hidden transition-all duration-200 origin-top ${isSiteDropdownOpen ? 'scale-y-100 opacity-100' : 'scale-y-0 opacity-0 pointer-events-none'}`}>
@@ -417,9 +424,16 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                       </div>
                     </div>
                     <div className="max-h-52 overflow-y-auto custom-scrollbar py-1">
-                      {masterSites.filter(site => site.toLowerCase().includes(siteSearchQuery.toLowerCase())).map(site => (
-                        <div key={site} onClick={() => { setSupSite(site); setIsSiteDropdownOpen(false); setSiteSearchQuery(""); }} className={`px-4 py-2.5 text-sm font-black cursor-pointer transition-colors ${supSite === site ? 'bg-emerald-50 text-emerald-700' : 'text-gray-600 hover:bg-gray-50 hover:text-blue-600'}`}>{site}</div>
-                      ))}
+                      {masterSites.filter(site => getSiteDisplay(site).toLowerCase().includes(siteSearchQuery.toLowerCase())).map(site => {
+                        // NEW: Extract code for state, display string for UI
+                        const code = getSiteCode(site);
+                        const display = getSiteDisplay(site);
+                        return (
+                          <div key={code} onClick={() => { setSupSite(code); setIsSiteDropdownOpen(false); setSiteSearchQuery(""); }} className={`px-4 py-2.5 text-sm font-black cursor-pointer transition-colors ${supSite === code ? 'bg-emerald-50 text-emerald-700' : 'text-gray-600 hover:bg-gray-50 hover:text-blue-600'}`}>
+                            {display}
+                          </div>
+                        )
+                      })}
                     </div>
                   </div>
                 </div>
@@ -480,7 +494,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
           </div>
         </div>
       ) : (
-        /* HISTORY TAB CONTENT */
         <div className="max-w-3xl mx-auto pt-4 md:pt-8 px-2 md:px-4 space-y-4 animate-in fade-in slide-in-from-right-2 duration-300">
           <div className="bg-white rounded-[1.5rem] md:rounded-[2rem] p-4 md:p-8 shadow-sm border border-gray-100">
             <h2 className="text-xl md:text-2xl font-black text-gray-900 mb-6 flex items-center gap-2">
@@ -496,10 +509,12 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                 myLogs.map(log => {
                   const approvedReq = myRequests.find(r => r.logId === log.id && r.status === 'approved');
                   const pendingReq = myRequests.find(r => r.logId === log.id && r.status === 'pending');
-
-                  // FIX 1: Restrict free edits to 3 maximum. After that, they must request approval.
                   const editCount = log.editCount || 0;
                   const canEdit = (isToday(log.date) && editCount < 3) || approvedReq;
+
+                  // NEW: Translates the stored code back to the Full Name for history display
+                  const sFull = masterSites.find(s => getSiteCode(s) === log.site);
+                  const displayLogSite = sFull ? getSiteDisplay(sFull) : log.site;
 
                   return (
                     <div key={log.id} className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-emerald-200 transition-colors">
@@ -511,7 +526,8 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                           {log.isEdited && <span className="bg-yellow-100 text-yellow-800 text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">Edited {editCount > 0 ? `(${editCount}/3)` : ''}</span>}
                           {log.timestamp && <span className="text-[10px] text-gray-400 font-bold ml-1">{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
                         </div>
-                        <h4 className="font-black text-gray-900 text-base">{log.site}</h4>
+                        {/* NEW: Display the fully translated name here */}
+                        <h4 className="font-black text-gray-900 text-base">{displayLogSite}</h4>
                         <p className="text-xs text-gray-500 font-bold flex items-center gap-1 mt-0.5">
                           <Users className="w-3 h-3" /> {log.contractor}'s Team <span className="text-gray-300 mx-1">|</span> {log.workers?.length || 0} Present
                         </p>
@@ -542,7 +558,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
         </div>
       )}
 
-      {/* BOTTOM NAVIGATION TABS FOR MOBILE */}
       <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 px-4 py-3 shadow-[0_-4px_20px_-10px_rgba(0,0,0,0.1)] z-50 md:flex md:justify-center">
         <div className="flex max-w-md w-full mx-auto gap-2 bg-gray-100 p-1 rounded-2xl">
           <button onClick={() => setActivePortalTab('attendance')} className={`flex-1 flex flex-col items-center justify-center py-2 rounded-xl transition-all ${activePortalTab === 'attendance' ? 'bg-white text-emerald-600 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
