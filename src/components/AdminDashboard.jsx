@@ -2,12 +2,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { auth } from '../firebase';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import {
   Upload, Download, FileText, UploadCloud, LayoutGrid, Search,
   Save, Trash2, Database, Clock, Check, BarChart3,
   LogOut, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, RefreshCw, ClipboardList, AlertCircle, CheckCircle, Edit2, Eye, EyeOff
 } from 'lucide-react';
-import { collection, getDocs, deleteDoc, doc, setDoc, updateDoc } from "firebase/firestore";
+import { collection, getDocs, setDoc, doc, deleteDoc, updateDoc, onSnapshot, query, where, orderBy, limit } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { db, secondaryAuth } from '../firebase';
 
@@ -47,6 +49,8 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const [dashboardTab, setDashboardTab] = useState('upload');
   const [savedSheets, setSavedSheets] = useState([]);
   const [dailyLogs, setDailyLogs] = useState([]); // NEW: Stores the audit trail
+
+  const [pendingRequests, setPendingRequests] = useState([]);
   const [editRequests, setEditRequests] = useState([]);
 
   const [isSaving, setIsSaving] = useState(false);
@@ -99,31 +103,6 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       sheets.sort((a, b) => b.id.localeCompare(a.id));
       setSavedSheets(sheets);
 
-      // NEW: Fetch daily audit logs
-      try {
-        const logsSnap = await getDocs(collection(db, "daily_logs"));
-        const logs = [];
-        logsSnap.forEach(d => logs.push({ id: d.id, ...d.data() }));
-
-        // FIX 3: Sort strictly by Date first, then by submission time
-        logs.sort((a, b) => {
-          const dateA = new Date(a.date).getTime() || 0;
-          const dateB = new Date(b.date).getTime() || 0;
-          if (dateB !== dateA) return dateB - dateA;
-          return (b.timestamp || 0) - (a.timestamp || 0);
-        });
-        setDailyLogs(logs);
-      } catch (e) { console.error("Error fetching daily logs:", e); }
-
-      // NEW: Fetch Edit Requests (Permissions Inbox)
-      try {
-        const reqSnap = await getDocs(collection(db, "edit_requests"));
-        const reqs = [];
-        reqSnap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
-        reqs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        setEditRequests(reqs);
-      } catch (e) { console.error("Error fetching edit requests:", e); }
-
       // Fetch master data
       let loadedWorkers = [];
       let finalSitesArray = [];
@@ -160,21 +139,32 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   useEffect(() => { fetchData(); }, []);
 
   // FIX 5: Prevent Back Gesture from exiting app
+  // --- QUOTA-PROOF LIVE LISTENERS ---
   useEffect(() => {
-    window.history.pushState({ noBackExitsApp: true }, '');
-    const handlePopState = (e) => window.history.pushState({ noBackExitsApp: true }, '');
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    // 1. Live Logs (Capped at 100 to protect your free quota forever)
+    const qLogs = query(collection(db, "daily_logs"), orderBy("timestamp", "desc"), limit(100));
+    const unsubLogs = onSnapshot(qLogs, (snap) => {
+      const logs = [];
+      snap.forEach(d => logs.push({ id: d.id, ...d.data() }));
+      setDailyLogs(logs);
+    });
+
+    // 2. Live Permission Requests (Instantly alerts you when Laljeet needs to edit/backdate)
+    const qReqs = query(collection(db, "edit_requests"), where("status", "==", "pending"));
+    const unsubReqs = onSnapshot(qReqs, (snap) => {
+      const reqs = [];
+      snap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
+      setPendingRequests(reqs.sort((a, b) => b.timestamp - a.timestamp));
+    });
+
+    return () => { unsubLogs(); unsubReqs(); };
   }, []);
 
-  const pendingRequests = editRequests.filter(req => req.status === 'pending');
-
-  const handleApproveEdit = async (reqId) => {
+  // Action function to Approve/Deny
+  const handleRequestAction = async (reqId, action) => {
     try {
-      await updateDoc(doc(db, "edit_requests", reqId), { status: 'approved' });
-      alert("Edit approved! The supervisor can now modify that log.");
-      fetchData(); // Refresh the inbox
-    } catch (err) { alert("Error approving edit."); }
+      await updateDoc(doc(db, "edit_requests", reqId), { status: action, actionAt: Date.now() });
+    } catch (error) { alert("Error updating request."); }
   };
 
   const formatCurrency = (amount) => {
@@ -424,7 +414,20 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   // FIX 4: Delete a specific contractor's data without deleting the whole 15-day bucket
   const deleteContractorRecord = async (contractorName, e) => {
     e.stopPropagation();
-    if (!window.confirm(`Are you sure you want to PERMANENTLY DELETE all records for ${contractorName} from this 15-day sheet?`)) return;
+
+    // SECURITY LOCK: Password Verification
+    const enteredPassword = window.prompt(`SECURITY LOCK\nEnter your Master Admin password to PERMANENTLY delete ${contractorName}'s records:`);
+    if (!enteredPassword) return; // You clicked cancel
+
+    try {
+      // Verify password with Firebase
+      await signInWithEmailAndPassword(auth, currentUser.email, enteredPassword);
+    } catch (error) {
+      return alert("🚨 INCORRECT PASSWORD! Deletion blocked.");
+    }
+
+    if (!window.confirm(`FINAL WARNING: Are you absolutely sure you want to delete all records for ${contractorName}?`)) return;
+
     try {
       const newSiteData = siteData.filter(s => s.contractor !== contractorName);
       const newDayData = dayData.filter(d => d.contractor !== contractorName);
@@ -732,7 +735,6 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     setIsCreatingSup(false);
   };
 
-  // --- SITE MANAGEMENT ACTION ---
   // --- SITE MANAGEMENT ACTION ---
   const handleAddNewSite = async (e) => {
     e.preventDefault();
@@ -1095,7 +1097,6 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                 )}
               </div>
             )}
-
             {/* TAB 4: AUDIT LOGS */}
             {dashboardTab === 'logs' && (
               <div className="max-w-4xl mx-auto">
@@ -1139,7 +1140,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
               </div>
             )}
 
-            {/* TAB 5: EDIT APPROVALS INBOX (NEW) */}
+            {/* TAB 5: EDIT APPROVALS INBOX */}
             {dashboardTab === 'approvals' && (
               <div className="max-w-4xl mx-auto">
                 <div className="bg-white rounded-[2rem] p-6 md:p-8 shadow-sm border border-gray-100">
@@ -1153,35 +1154,34 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                   </div>
 
                   <div className="space-y-3">
-                    {editRequests.length === 0 ? (
-                      <p className="text-center text-gray-500 py-8 font-medium">No edit requests found.</p>
+                    {pendingRequests.length === 0 ? (
+                      <div className="text-center bg-gray-50 rounded-2xl border border-gray-100 py-10">
+                        <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
+                        <p className="text-gray-500 font-bold">You are all caught up! No pending requests.</p>
+                      </div>
                     ) : (
-                      editRequests.map(req => (
-                        <div key={req.id} className={`p-4 rounded-2xl border flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-colors ${req.status === 'pending' ? 'bg-white border-rose-200 shadow-[0_4px_15px_-3px_rgba(244,63,94,0.1)]' : 'bg-gray-50 border-gray-100 opacity-60'}`}>
+                      pendingRequests.map(req => (
+                        <div key={req.id} className="p-4 md:p-5 rounded-2xl border bg-white border-rose-200 shadow-[0_4px_15px_-3px_rgba(244,63,94,0.1)] flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-all">
                           <div>
-                            <div className="flex items-center gap-2 mb-1">
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className="bg-rose-100 text-rose-700 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider">
+                                {req.type === 'backdate' ? 'Past Date Unlock' : 'Edit Request'}
+                              </span>
                               <span className="font-black text-gray-900 text-sm">{req.site}</span>
                               <span className="text-gray-400 font-bold text-xs uppercase tracking-wider">| {req.date}</span>
                             </div>
-                            <p className="text-xs text-gray-500 font-bold flex items-center gap-1">
-                              <Clock className="w-3 h-3" /> Requested by <span className="text-blue-600">{req.submittedBy}</span>
-                            </p>
+                            <h4 className="font-black text-gray-900 text-base">
+                              {req.submittedBy.split('@')[0]} wants to {req.type === 'backdate' ? 'submit missing attendance' : 'edit an existing log'}
+                            </h4>
                           </div>
 
-                          <div className="w-full md:w-auto flex items-center justify-end">
-                            {req.status === 'pending' ? (
-                              <button onClick={() => handleApproveEdit(req.id)} className="w-full md:w-auto px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded-xl transition-colors flex items-center justify-center gap-2 shadow-sm">
-                                <CheckCircle className="w-4 h-4" /> Approve Edit Unlock
-                              </button>
-                            ) : req.status === 'approved' ? (
-                              <span className="px-4 py-2 bg-emerald-50 text-emerald-700 font-black text-xs rounded-xl flex items-center gap-1.5 border border-emerald-100">
-                                <Check className="w-3.5 h-3.5" /> Approved
-                              </span>
-                            ) : (
-                              <span className="px-4 py-2 bg-gray-100 text-gray-500 font-black text-xs rounded-xl flex items-center gap-1.5 border border-gray-200">
-                                <Check className="w-3.5 h-3.5" /> Used & Resolved
-                              </span>
-                            )}
+                          <div className="w-full md:w-auto flex items-center justify-end gap-2">
+                            <button onClick={() => handleRequestAction(req.id, 'denied')} className="flex-1 md:flex-none px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-black text-xs rounded-xl transition-colors">
+                              Deny
+                            </button>
+                            <button onClick={() => handleRequestAction(req.id, 'approved')} className="flex-1 md:flex-none px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl transition-colors flex items-center justify-center gap-2 shadow-sm">
+                              <CheckCircle className="w-4 h-4" /> Approve
+                            </button>
                           </div>
                         </div>
                       ))
@@ -1220,7 +1220,6 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                         required
                         className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all"
                       />
-                      {/* FIX 6: Password visibility toggle */}
                       <div className="relative w-full">
                         <input
                           type={showPassword ? "text" : "password"}
@@ -1251,7 +1250,6 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                     </form>
                   </div>
 
-                  {/* NEW: ADD SITE FORM */}
                   <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6 text-left mt-6">
                     <h3 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2"><Layers className="w-4 h-4 text-emerald-500" /> Create New Site</h3>
                     <form onSubmit={handleAddNewSite} className="flex flex-col sm:flex-row gap-3">
@@ -1275,7 +1273,6 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                       </button>
                     </form>
                   </div>
-
                 </div>
               </div>
             )}

@@ -168,6 +168,40 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
     if (!supSite || !supContractor) return alert("Please select a site and contractor.");
     setIsSubmittingLog(true);
 
+    // --- SECURITY WALL START ---
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // 1. Block Future Attendance (Tomorrow or later)
+    if (supDate > todayStr) {
+      setIsSubmittingLog(false);
+      return alert("🚨 NOT ALLOWED: You cannot submit attendance for tomorrow or any future date.");
+    }
+
+    // 2. Block Past Attendance (Unless specifically Approved by Admin)
+    if (supDate < todayStr && !editingLog) {
+      const hasBackdateApproval = myRequests.find(r => r.date === supDate && r.status === 'approved' && r.type === 'backdate');
+      if (!hasBackdateApproval) {
+        setIsSubmittingLog(false);
+        return alert("🚨You can only submit attendance for TODAY.\n\nPlease use the 'Request Past Date Unlock' link below the calendar to get Admin approval first.");
+      }
+    }
+
+    // 3. Block Duplicate Attendance (Same Contractor + Same Site + Same Date)
+    if (!editingLog) {
+      const duplicateCheckQuery = query(collection(db, "daily_logs"),
+        where("date", "==", supDate),
+        where("site", "==", supSite),
+        where("contractor", "==", supContractor)
+      );
+      const duplicateSnap = await getDocs(duplicateCheckQuery);
+
+      if (!duplicateSnap.empty) {
+        setIsSubmittingLog(false);
+        return alert(`🛑 DUPLICATE ATTENDANCE: You have already submitted attendance for ${supContractor} at this site today!\n\nIf you need to make changes, go to "My Logs" and click 'Edit Log'.`);
+      }
+    }
+    // --- SECURITY WALL END ---
+
     const period = getPeriodKey(supDate);
     const dayNum = parseInt(supDate.split('-')[2]);
 
@@ -317,11 +351,21 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
     try {
       await addDoc(collection(db, "edit_requests"), {
         logId: log.id, date: log.date, site: log.site, contractor: log.contractor,
-        submittedBy: currentUser.email, timestamp: Date.now(), status: 'pending'
+        submittedBy: currentUser.email, timestamp: Date.now(), status: 'pending', type: 'edit'
       });
-      fetchHistoryData(); // refresh the buttons
+      fetchHistoryData();
       alert("Edit request sent to Master Admin successfully!");
     } catch (err) { alert("Error sending edit request."); }
+  };
+
+  const handleRequestBackdate = async () => {
+    try {
+      await addDoc(collection(db, "edit_requests"), {
+        date: supDate, submittedBy: currentUser.email, timestamp: Date.now(), status: 'pending', type: 'backdate'
+      });
+      fetchHistoryData();
+      alert(`Permission request for ${supDate} sent to Admin! Check back soon.`);
+    } catch (err) { alert("Error sending request."); }
   };
 
   const cancelEdit = () => {
@@ -402,8 +446,21 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Work Date</label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none"><Calendar className="h-4 w-4 text-emerald-500" /></div>
-                  <input type="date" disabled={editingLog} value={supDate} onChange={(e) => setSupDate(e.target.value)} className="w-full bg-gray-50 hover:bg-white border border-gray-200 pl-10 pr-3 py-3 rounded-xl text-sm font-black text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm transition-all cursor-pointer relative [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:cursor-pointer z-10 bg-transparent" />
+                  <input type="date" disabled={editingLog} max={new Date().toISOString().split('T')[0]} value={supDate} onChange={(e) => setSupDate(e.target.value)} className="w-full bg-gray-50 hover:bg-white border border-gray-200 pl-10 pr-3 py-3 rounded-xl text-sm font-black text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm transition-all cursor-pointer relative [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:cursor-pointer z-10 bg-transparent" />
                 </div>
+
+                {/* NEW: Request Backdate UI */}
+                {supDate < new Date().toISOString().split('T')[0] && !editingLog && (
+                  <div className="mt-1 ml-1 text-[10px] font-bold">
+                    {myRequests.find(r => r.date === supDate && r.status === 'approved' && r.type === 'backdate') ? (
+                      <span className="text-emerald-600">✅ Unlocked by Admin! You can submit.</span>
+                    ) : myRequests.find(r => r.date === supDate && r.status === 'pending' && r.type === 'backdate') ? (
+                      <span className="text-orange-500">⏳ Request pending admin approval...</span>
+                    ) : (
+                      <button onClick={handleRequestBackdate} type="button" className="text-blue-600 hover:underline">Request Past Date Unlock</button>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1.5 relative z-50">
