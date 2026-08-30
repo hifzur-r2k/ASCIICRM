@@ -49,6 +49,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const [dashboardTab, setDashboardTab] = useState('upload');
   const [savedSheets, setSavedSheets] = useState([]);
   const [dailyLogs, setDailyLogs] = useState([]); // NEW: Stores the audit trail
+  const [expandedLogId, setExpandedLogId] = useState(null);
 
   const [pendingRequests, setPendingRequests] = useState([]);
   const [editRequests, setEditRequests] = useState([]);
@@ -1110,28 +1111,70 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                       <p className="text-center text-gray-500 py-8 font-medium">No attendance logs found.</p>
                     ) : (
                       dailyLogs.map(log => (
-                        <div key={log.id} className={`p-4 rounded-2xl border flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-colors ${log.isEdited ? 'bg-yellow-50/50 border-yellow-200 shadow-[inset_0_0_0_1px_rgba(250,204,21,0.2)]' : 'bg-gray-50 border-gray-100'}`}>
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="bg-orange-100 text-orange-700 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider">
-                                {new Date(log.timestamp).toLocaleString()}
-                              </span>
-                              {log.isEdited && (
-                                <span className="bg-yellow-400 text-yellow-900 text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider flex items-center gap-1">
-                                  <Edit2 className="w-2.5 h-2.5" /> EDITED {log.editCount ? `(${log.editCount})` : ''}
+                        <div key={log.id} className={`p-4 rounded-2xl border flex flex-col gap-4 transition-colors ${log.isEdited ? 'bg-yellow-50/50 border-yellow-200 shadow-[inset_0_0_0_1px_rgba(250,204,21,0.2)]' : 'bg-gray-50 border-gray-100'}`}>
+                          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="bg-orange-100 text-orange-700 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider">
+                                  {new Date(log.timestamp).toLocaleString()}
                                 </span>
-                              )}
-                              <span className="font-bold text-gray-900 text-sm ml-1">{log.site}</span>
+                                {log.isEdited && (
+                                  <span className="bg-yellow-400 text-yellow-900 text-[9px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider flex items-center gap-1">
+                                    <Edit2 className="w-2.5 h-2.5" /> EDITED {log.editCount ? `(${log.editCount})` : ''}
+                                  </span>
+                                )}
+                                <span className="font-bold text-gray-900 text-sm ml-1">{log.site}</span>
+                              </div>
+                              <p className="text-xs text-gray-500 font-bold flex items-center gap-1">
+                                <Users className="w-3 h-3" /> {log.contractor}'s Team <span className="text-gray-300 mx-1">|</span> {log.workers?.length || 0} Workers Logged
+                              </p>
                             </div>
-                            <p className="text-xs text-gray-500 font-bold flex items-center gap-1">
-                              <Users className="w-3 h-3" /> {log.contractor}'s Team <span className="text-gray-300 mx-1">|</span> {log.workers?.length || 0} Workers Logged
-                            </p>
+                            <div className="flex gap-2 w-full md:w-auto">
+                              {/* VIEW WORKERS TOGGLE */}
+                              <button onClick={() => setExpandedLogId(expandedLogId === log.id ? null : log.id)} className={`flex-1 md:flex-none px-3 py-2 font-black text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 border ${expandedLogId === log.id ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-100'}`}>
+                                {expandedLogId === log.id ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                {expandedLogId === log.id ? 'Hide Roster' : 'View Roster'}
+                              </button>
+                              
+                              <div className={`px-3 py-2 rounded-xl border text-right flex-1 md:flex-none ${log.isEdited ? 'bg-white border-yellow-200' : 'bg-white border-gray-200'}`}>
+                                <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-0.5">Submitted By</p>
+                                <p className="text-xs font-bold text-blue-600">{log.submittedBy || "Unknown"}</p>
+                                {log.editTimestamp && <p className="text-[8px] text-yellow-600 font-bold mt-0.5">Edited: {new Date(log.editTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>}
+                              </div>
+                            </div>
                           </div>
-                          <div className={`px-3 py-2 rounded-xl border text-right w-full md:w-auto ${log.isEdited ? 'bg-white border-yellow-200' : 'bg-white border-gray-200'}`}>
-                            <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-0.5">Submitted By</p>
-                            <p className="text-xs font-bold text-blue-600">{log.submittedBy || "Unknown"}</p>
-                            {log.editTimestamp && <p className="text-[8px] text-yellow-600 font-bold mt-0.5">Edited: {new Date(log.editTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>}
-                          </div>
+
+                          {/* EXPANDABLE GROUPED WORKER LIST */}
+                          {expandedLogId === log.id && log.workers && (
+                            <div className="pt-3 border-t border-gray-200/60 animate-in slide-in-from-top-2 fade-in duration-300">
+                              {['Mason', 'HalfMason', 'Helper'].map(type => {
+                                const catWorkers = log.workers.filter(w => w.type === type);
+                                if (catWorkers.length === 0) return null;
+                                
+                                const title = type === 'HalfMason' ? 'Half Masons' : type + 's';
+                                const badgeClass = type === 'Mason' ? 'bg-blue-100 text-blue-700' : type === 'HalfMason' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700';
+
+                                return (
+                                  <div key={type} className="mb-3 last:mb-0">
+                                    <h5 className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded w-max mb-2 ${badgeClass}`}>{title}</h5>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                      {catWorkers.map((w, i) => (
+                                        <div key={i} className="flex justify-between items-center bg-white px-3 py-2 rounded-lg border border-gray-100 shadow-sm">
+                                          <span className="text-xs font-black text-gray-800">{w.worker}</span>
+                                          <div className="text-[10px] font-bold text-right tracking-tight">
+                                            <span className={w.regDays === 0.5 ? "text-yellow-600" : w.regDays === 2.0 ? "text-indigo-600" : "text-emerald-600"}>
+                                              {w.regDays === 0.5 ? 'HD' : w.regDays === 2.0 ? '2P' : 'P'}
+                                            </span>
+                                            {w.otHours > 0 && <span className="text-purple-600 ml-1.5">+{w.otHours}h OT</span>}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       ))
                     )}
