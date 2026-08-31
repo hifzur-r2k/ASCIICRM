@@ -7,7 +7,7 @@ import { signInWithEmailAndPassword } from 'firebase/auth';
 import {
   Upload, Download, FileText, UploadCloud, LayoutGrid, Search,
   Save, Trash2, Database, Clock, Check, BarChart3,
-  LogOut, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, RefreshCw, ClipboardList, AlertCircle, CheckCircle, Edit2, Eye, EyeOff
+  LogOut, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, RefreshCw, ClipboardList, AlertCircle, CheckCircle, Edit2, Eye, EyeOff, MapPin
 } from 'lucide-react';
 import { collection, getDocs, setDoc, doc, deleteDoc, updateDoc, onSnapshot, query, where, orderBy, limit } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
@@ -48,11 +48,18 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const rosterInputRef = useRef(null);
   const [dashboardTab, setDashboardTab] = useState('upload');
   const [savedSheets, setSavedSheets] = useState([]);
-  const [dailyLogs, setDailyLogs] = useState([]); // NEW: Stores the audit trail
-  const [expandedLogId, setExpandedLogId] = useState(null);
-
+  const [dailyLogs, setDailyLogs] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
-  const [editRequests, setEditRequests] = useState([]);
+  const [expandedLogId, setExpandedLogId] = useState(null);
+  // --- NEW WORKER APPROVAL STATES ---
+  const [approvingWorkerReq, setApprovingWorkerReq] = useState(null);
+  const [newWorkerWage, setNewWorkerWage] = useState("");
+
+  // --- TEST MODE (SHADOW DATABASE) STATES ---
+  const [isTestMode, setIsTestMode] = useState(false);
+  const COLL_SHEETS = isTestMode ? "test_attendance_sheets" : "attendance_sheets";
+  const COLL_LOGS = isTestMode ? "test_daily_logs" : "daily_logs";
+  const COLL_REQS = isTestMode ? "test_edit_requests" : "edit_requests";
 
   const [isSaving, setIsSaving] = useState(false);
   const [hasSavedCurrent, setHasSavedCurrent] = useState(false);
@@ -71,12 +78,11 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const [newSupEmail, setNewSupEmail] = useState("");
   const [newSupPassword, setNewSupPassword] = useState("");
   const [teamMessage, setTeamMessage] = useState({ text: "", type: "" });
-
   const [isCreatingSup, setIsCreatingSup] = useState(false);
   const [newSiteCode, setNewSiteCode] = useState("");
   const [newSiteName, setNewSiteName] = useState("");
-  const [loadedSheetId, setLoadedSheetId] = useState(null); // FIX 4: Track exact sheet for deletion
-  const [showPassword, setShowPassword] = useState(false); // FIX 6: Toggle password visibility
+  const [loadedSheetId, setLoadedSheetId] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   const defaultContractors = ["Arvind", "Laljeet", "Deepak"];
   const dynamicContractors = Array.from(new Set([...defaultContractors, ...masterWorkers.map(w => w.contractor)])).filter(Boolean);
@@ -89,8 +95,8 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const fetchData = async () => {
     setIsLoadingRecords(true);
     try {
-      // Fetch 15-day sheets
-      const sheetsSnap = await getDocs(collection(db, "attendance_sheets"));
+      // 1. Fetch from either LIVE or TEST sheets bucket based on switch
+      const sheetsSnap = await getDocs(collection(db, COLL_SHEETS));
       const sheets = [];
       let aggregatedSites = new Set();
 
@@ -104,22 +110,20 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       sheets.sort((a, b) => b.id.localeCompare(a.id));
       setSavedSheets(sheets);
 
-      // Fetch master data
+      // 2. Fetch master data (Master data is shared between Live/Test so sites/supervisors stay accurate)
       let loadedWorkers = [];
       let finalSitesArray = [];
       try {
         const masterSnap = await getDocs(collection(db, "master_data"));
         const siteMap = new Map();
 
-        // 1. Add raw codes from the Excel buckets first
         aggregatedSites.forEach(code => siteMap.set(code, code));
 
-        // 2. Overwrite with rich names from the database if they exist
         masterSnap.forEach(docSnap => {
           if (docSnap.id === "sites" && docSnap.data().list) {
             docSnap.data().list.forEach(siteString => {
               const code = siteString.includes('|') ? siteString.split('|')[0] : siteString;
-              siteMap.set(code, siteString); // Upgrades raw code to full name
+              siteMap.set(code, siteString);
             });
           }
           if (docSnap.id === "workers" && docSnap.data().list) loadedWorkers = docSnap.data().list;
@@ -137,21 +141,19 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     setIsLoadingRecords(false);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  // Re-fetch immediately if the Test Mode switch is flipped
+  useEffect(() => { fetchData(); }, [isTestMode]);
 
-  // FIX 5: Prevent Back Gesture from exiting app
   // --- QUOTA-PROOF LIVE LISTENERS ---
   useEffect(() => {
-    // 1. Live Logs (Capped at 100 to protect your free quota forever)
-    const qLogs = query(collection(db, "daily_logs"), orderBy("timestamp", "desc"), limit(100));
+    const qLogs = query(collection(db, COLL_LOGS), orderBy("timestamp", "desc"), limit(100));
     const unsubLogs = onSnapshot(qLogs, (snap) => {
       const logs = [];
       snap.forEach(d => logs.push({ id: d.id, ...d.data() }));
       setDailyLogs(logs);
     });
 
-    // 2. Live Permission Requests (Instantly alerts you when Laljeet needs to edit/backdate)
-    const qReqs = query(collection(db, "edit_requests"), where("status", "==", "pending"));
+    const qReqs = query(collection(db, COLL_REQS), where("status", "==", "pending"));
     const unsubReqs = onSnapshot(qReqs, (snap) => {
       const reqs = [];
       snap.forEach(d => reqs.push({ id: d.id, ...d.data() }));
@@ -159,13 +161,118 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     });
 
     return () => { unsubLogs(); unsubReqs(); };
-  }, []);
+  }, [isTestMode]);
 
-  // Action function to Approve/Deny
-  const handleRequestAction = async (reqId, action) => {
+  const handleRequestAction = async (req, action) => {
     try {
-      await updateDoc(doc(db, "edit_requests", reqId), { status: action, actionAt: Date.now() });
+      // INTERCEPT 1: Open the wage box for new workers
+      if (req.type === 'new_worker' && action === 'approved') {
+        setApprovingWorkerReq(req);
+        return;
+      }
+
+      // INTERCEPT 2: Surgically remove fake worker from the log if denied
+      if (req.type === 'new_worker' && action === 'denied') {
+        const targetLog = dailyLogs.find(l => l.id === req.logId);
+        if (targetLog) {
+          const cleanedWorkers = targetLog.workers.filter(w => !(w.worker === req.workerName && w.isProvisional));
+          await updateDoc(doc(db, COLL_LOGS, req.logId), { workers: cleanedWorkers });
+        }
+      }
+
+      await updateDoc(doc(db, COLL_REQS, req.id), { status: action, actionAt: Date.now() });
     } catch (error) { alert("Error updating request."); }
+  };
+
+  const handleApproveNewWorker = async (req) => {
+    if (!newWorkerWage || isNaN(newWorkerWage)) return alert("Please enter a valid daily wage.");
+    const wageNum = parseFloat(newWorkerWage);
+    
+    try {
+      // 1. Add to Master Roster permanently
+      const newWorker = {
+        name: req.workerName,
+        type: req.workerType,
+        contractor: req.contractor,
+        wage: wageNum,
+        otRate: wageNum / 8
+      };
+      const updatedMaster = [...masterWorkers, newWorker];
+      await setDoc(doc(db, "master_data", "workers"), { list: updatedMaster });
+      setMasterWorkers(updatedMaster);
+
+      let addedBase = 0;
+      let addedOT = 0;
+      let targetRegDays = 0;
+      let targetOTHours = 0;
+
+      // 2. Inject real wage into the Daily Log
+      const targetLog = dailyLogs.find(l => l.id === req.logId);
+      if (targetLog) {
+        const updatedWorkers = targetLog.workers.map(w => {
+          if (w.worker === req.workerName && w.isProvisional) {
+            targetRegDays = w.regDays;
+            targetOTHours = w.otHours;
+            addedBase = w.regDays * wageNum;
+            addedOT = w.otHours * (wageNum / 8);
+            return { ...w, totalBaseCost: addedBase, totalOTCost: addedOT, isProvisional: false };
+          }
+          return w;
+        });
+        await updateDoc(doc(db, COLL_LOGS, req.logId), { workers: updatedWorkers });
+      }
+
+      // 3. Retroactively fix the Financial Master Sheet (This was missing!)
+      if (targetRegDays > 0 || targetOTHours > 0) {
+        const d = new Date(req.date);
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = d.getDate();
+        const half = day <= 15 ? 'H1' : 'H2';
+        const periodId = `${year}-${month}-${half}`;
+
+        const sheetToUpdate = savedSheets.find(s => s.id === periodId);
+        if (sheetToUpdate) {
+          let updatedSiteData = [...(sheetToUpdate.siteData || [])];
+          let updatedDayData = [...(sheetToUpdate.dayData || [])];
+          let updatedWorkerData = [...(sheetToUpdate.workerData || [])];
+
+          // Inject missing money into Worker Data
+          const wIdx = updatedWorkerData.findIndex(w => w.worker === req.workerName && w.contractor === req.contractor);
+          if (wIdx > -1) {
+            updatedWorkerData[wIdx].totalBaseCost += addedBase;
+            updatedWorkerData[wIdx].totalOTCost += addedOT;
+          }
+
+          // Inject missing money into Site Data
+          const sIdx = updatedSiteData.findIndex(s => s.site === req.site && s.contractor === req.contractor);
+          if (sIdx > -1) {
+            updatedSiteData[sIdx].totalBaseCost += addedBase;
+            updatedSiteData[sIdx].totalOTCost += addedOT;
+          }
+
+          // Inject missing money into Day Data
+          const dIdx = updatedDayData.findIndex(dayData => dayData.day === day && dayData.site === req.site && dayData.contractor === req.contractor);
+          if (dIdx > -1) {
+            updatedDayData[dIdx].totalBaseCost += addedBase;
+            updatedDayData[dIdx].totalOTCost += addedOT;
+          }
+
+          await updateDoc(doc(db, COLL_SHEETS, periodId), {
+            siteData: updatedSiteData,
+            dayData: updatedDayData,
+            workerData: updatedWorkerData,
+            updatedAt: Date.now()
+          });
+          fetchData(); // Force UI refresh
+        }
+      }
+
+      // 4. Clear the request
+      await updateDoc(doc(db, COLL_REQS, req.id), { status: 'approved', actionAt: Date.now() });
+      setApprovingWorkerReq(null); setNewWorkerWage("");
+      alert(`${req.workerName} successfully registered at ₹${wageNum}/day!`);
+    } catch (err) { alert("Error approving worker."); console.error(err); }
   };
 
   const formatCurrency = (amount) => {
@@ -373,9 +480,9 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     const period = getPeriodKey(mockDate);
 
     try {
-      const docRef = doc(db, "attendance_sheets", period.id);
+      const docRef = doc(db, COLL_SHEETS, period.id);
       let existingData = { sheetName: period.displayName, siteData: [], dayData: [], workerData: [], createdAt: Date.now() };
-      const docSnap = await getDocs(collection(db, "attendance_sheets"));
+      const docSnap = await getDocs(collection(db, COLL_SHEETS));
       docSnap.forEach(d => { if (d.id === period.id) existingData = d.data(); });
 
       const newSiteData = (existingData.siteData || []).filter(s => s.contractor !== sheetContractor);
@@ -406,22 +513,18 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     e.stopPropagation();
     if (!window.confirm("Are you sure you want to permanently delete this entire 15-day period?")) return;
     try {
-      await deleteDoc(doc(db, "attendance_sheets", id));
+      await deleteDoc(doc(db, COLL_SHEETS, id));
       setSavedSheets(savedSheets.filter(sheet => sheet.id !== id));
       if (hasSavedCurrent) goHome();
     } catch (error) { console.error("Error deleting:", error); }
   };
 
-  // FIX 4: Delete a specific contractor's data without deleting the whole 15-day bucket
   const deleteContractorRecord = async (contractorName, e) => {
     e.stopPropagation();
-
-    // SECURITY LOCK: Password Verification
     const enteredPassword = window.prompt(`SECURITY LOCK\nEnter your Master Admin password to PERMANENTLY delete ${contractorName}'s records:`);
-    if (!enteredPassword) return; // You clicked cancel
+    if (!enteredPassword) return;
 
     try {
-      // Verify password with Firebase
       await signInWithEmailAndPassword(auth, currentUser.email, enteredPassword);
     } catch (error) {
       return alert("🚨 INCORRECT PASSWORD! Deletion blocked.");
@@ -434,18 +537,27 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       const newDayData = dayData.filter(d => d.contractor !== contractorName);
       const newWorkerData = workerData.filter(w => w.contractor !== contractorName);
 
-      await updateDoc(doc(db, "attendance_sheets", loadedSheetId), {
+      await updateDoc(doc(db, COLL_SHEETS, loadedSheetId), {
         siteData: newSiteData, dayData: newDayData, workerData: newWorkerData, updatedAt: Date.now()
       });
 
       setSiteData(newSiteData); setDayData(newDayData); setWorkerData(newWorkerData);
       alert(`Successfully deleted ${contractorName}'s records.`);
-      if (newWorkerData.length === 0) goHome(); // If bucket is empty now, exit to home
+      if (newWorkerData.length === 0) goHome();
     } catch (error) { alert("Error deleting contractor."); }
   };
 
+  const handleDeleteSite = async (siteToDelete) => {
+    if (!window.confirm(`Are you sure you want to delete this site code?`)) return;
+    const updatedSites = masterSites.filter(s => s !== siteToDelete);
+    try {
+      await setDoc(doc(db, "master_data", "sites"), { list: updatedSites });
+      setMasterSites(updatedSites);
+    } catch (err) { alert("Error deleting site."); }
+  };
+
   const loadSavedRecord = (sheet) => {
-    setLoadedSheetId(sheet.id); // Track ID
+    setLoadedSheetId(sheet.id);
     setSheetName(sheet.sheetName); setSheetMonth(sheet.id.substring(0, 7));
     setSiteData(sheet.siteData || []); setDayData(sheet.dayData || []); setWorkerData(sheet.workerData || []);
     setHasSavedCurrent(true); setSearchQuery(""); setSelectedRecordContractor(null);
@@ -538,8 +650,6 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   };
   const multiSiteData = getMultiSiteAnalytics();
 
-  const recordContractors = Array.from(new Set([...dynamicContractors, ...workerData.map(w => w.contractor)])).filter(Boolean);
-
   const activeData = activeTab === 'site' ? siteData : activeTab === 'day' ? dayData : workerData;
   const contractorFilteredData = selectedRecordContractor ? activeData.filter(row => row.contractor === selectedRecordContractor) : activeData;
   const filteredData = contractorFilteredData.filter(row => row.site ? row.site.toLowerCase().includes(searchQuery.toLowerCase()) : row.worker.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -559,7 +669,6 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     return acc;
   }, { masonReg: 0, masonOT: 0, halfMasonReg: 0, halfMasonOT: 0, helperReg: 0, helperOT: 0, totalBaseCost: 0, totalOTCost: 0 });
 
-  // --- WORKER GROUPING LOGIC ---
   const masonsData = filteredData.filter(r => r.type === 'Mason');
   const halfMasonsData = filteredData.filter(r => r.type === 'HalfMason');
   const helpersData = filteredData.filter(r => r.type === 'Helper');
@@ -571,10 +680,8 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     otPay: acc.otPay + (row.totalOTCost || 0)
   }), { days: 0, ot: 0, base: 0, otPay: 0 });
 
-  // --- PROFESSIONAL EXPORT LOGIC ---
   const exportToExcel = () => {
     if (filteredData.length === 0) return alert("No data to export.");
-
     let aoa = [
       ["CRM_FIX - FINANCIAL & ATTENDANCE REPORT"],
       [`Period: ${sheetName}`],
@@ -585,7 +692,6 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
     if (activeTab === 'worker') {
       aoa.push(["Worker Name", "Category", "Total Days", "Total OT (Hrs)", "Base Pay (Rs)", "OT Pay (Rs)", "Total Payout (Rs)"]);
-
       const addCategoryToAOA = (data, catName) => {
         if (data.length === 0) return;
         data.forEach(row => {
@@ -595,11 +701,9 @@ export default function AdminDashboard({ currentUser, onLogout }) {
         aoa.push([`${catName.toUpperCase()} SUBTOTAL`, "", sub.days, sub.ot, sub.base, sub.otPay, sub.base + sub.otPay]);
         aoa.push([]);
       };
-
       addCategoryToAOA(masonsData, "Mason");
       addCategoryToAOA(halfMasonsData, "Half Mason");
       addCategoryToAOA(helpersData, "Helper");
-
       aoa.push(["GRAND TOTAL", "", totals.masonReg + totals.halfMasonReg + totals.helperReg, totals.masonOT + totals.halfMasonOT + totals.helperOT, totals.totalBaseCost, totals.totalOTCost, totals.totalBaseCost + totals.totalOTCost]);
     } else {
       const headers = activeTab === 'day'
@@ -616,19 +720,9 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       ft.push(totals.masonReg, totals.masonOT, totals.halfMasonReg, totals.halfMasonOT, totals.helperReg, totals.helperOT, totals.totalBaseCost, totals.totalOTCost, totals.totalBaseCost + totals.totalOTCost);
       aoa.push(ft);
     }
-
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [
-      { wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 15 },
-      { wch: 15 }, { wch: 20 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 20 }
-    ];
-    ws['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } },
-      { s: { r: 2, c: 0 }, e: { r: 2, c: 6 } },
-      { s: { r: 3, c: 0 }, e: { r: 3, c: 6 } }
-    ];
-
+    ws['!cols'] = [{ wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 20 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 20 }];
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }, { s: { r: 2, c: 0 }, e: { r: 2, c: 6 } }, { s: { r: 3, c: 0 }, e: { r: 3, c: 6 } }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Report");
     XLSX.writeFile(wb, `CRM_FIX_${selectedRecordContractor}_${activeTab}_${sheetName}.xlsx`);
@@ -636,31 +730,18 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
   const exportToPDF = () => {
     if (filteredData.length === 0) return alert("No data to export.");
-
     try {
       const doc = new jsPDF('l');
-      doc.setFontSize(18);
-      doc.setTextColor(15, 23, 42);
-      doc.text("CRM_FIX Financial Report", 14, 22);
-
-      doc.setFontSize(10);
-      doc.setTextColor(100, 116, 139);
-      doc.text(`Period: ${sheetName}   |   Contractor: ${selectedRecordContractor}   |   View: ${activeTab.toUpperCase()}-WISE`, 14, 30);
-
-      let head = [];
-      let body = [];
-      let foot = [];
-
+      doc.setFontSize(18); doc.setTextColor(15, 23, 42); doc.text("CRM_FIX Financial Report", 14, 22);
+      doc.setFontSize(10); doc.setTextColor(100, 116, 139); doc.text(`Period: ${sheetName}   |   Contractor: ${selectedRecordContractor}   |   View: ${activeTab.toUpperCase()}-WISE`, 14, 30);
+      let head = []; let body = []; let foot = [];
       const formatNum = (num) => Number(num).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
       if (activeTab === 'worker') {
         head = [["Worker Name", "Category", "Total Days", "OT (Hrs)", "Base Pay (Rs)", "OT Pay (Rs)", "Total Payout (Rs)"]];
-
         const addCategoryToPDF = (data, catName) => {
           if (data.length === 0) return;
-          data.forEach(row => {
-            body.push([row.worker, row.type, row.regDays, row.otHours, formatNum(row.totalBaseCost), formatNum(row.totalOTCost), formatNum(row.totalBaseCost + row.totalOTCost)]);
-          });
+          data.forEach(row => { body.push([row.worker, row.type, row.regDays, row.otHours, formatNum(row.totalBaseCost), formatNum(row.totalOTCost), formatNum(row.totalBaseCost + row.totalOTCost)]); });
           const sub = calcSubtotals(data);
           body.push([
             { content: `${catName.toUpperCase()} SUBTOTAL`, colSpan: 2, styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } },
@@ -671,90 +752,47 @@ export default function AdminDashboard({ currentUser, onLogout }) {
             { content: formatNum(sub.base + sub.otPay), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }
           ]);
         };
-
-        addCategoryToPDF(masonsData, "Mason");
-        addCategoryToPDF(halfMasonsData, "Half Mason");
-        addCategoryToPDF(helpersData, "Helper");
-
+        addCategoryToPDF(masonsData, "Mason"); addCategoryToPDF(halfMasonsData, "Half Mason"); addCategoryToPDF(helpersData, "Helper");
         foot = [["GRAND TOTAL", "", (totals.masonReg + totals.halfMasonReg + totals.helperReg).toString(), (totals.masonOT + totals.halfMasonOT + totals.helperOT).toString(), formatNum(totals.totalBaseCost), formatNum(totals.totalOTCost), formatNum(totals.totalBaseCost + totals.totalOTCost)]];
       } else {
-        head = activeTab === 'day'
-          ? [["Day", "Site", "Mason", "M. OT", "HM", "HM OT", "Helper", "H. OT", "Base Cost", "OT Cost", "Total Cost"]]
-          : [["Site", "Mason", "M. OT", "HM", "HM OT", "Helper", "H. OT", "Base Cost", "OT Cost", "Total Cost"]];
-
+        head = activeTab === 'day' ? [["Day", "Site", "Mason", "M. OT", "HM", "HM OT", "Helper", "H. OT", "Base Cost", "OT Cost", "Total Cost"]] : [["Site", "Mason", "M. OT", "HM", "HM OT", "Helper", "H. OT", "Base Cost", "OT Cost", "Total Cost"]];
         body = filteredData.map(row => {
           const r = activeTab === 'day' ? [row.day] : [];
           r.push(row.site, row.masonReg, row.masonOT, row.halfMasonReg, row.halfMasonOT, row.helperReg, row.helperOT, formatNum(row.totalBaseCost || 0), formatNum(row.totalOTCost || 0), formatNum((row.totalBaseCost || 0) + (row.totalOTCost || 0)));
           return r;
         });
-
         const ft = activeTab === 'day' ? ["GRAND TOTAL", ""] : ["GRAND TOTAL"];
         ft.push(totals.masonReg, totals.masonOT, totals.halfMasonReg, totals.halfMasonOT, totals.helperReg, totals.helperOT, formatNum(totals.totalBaseCost), formatNum(totals.totalOTCost), formatNum(totals.totalBaseCost + totals.totalOTCost));
         foot = [ft];
       }
-
-      autoTable(doc, {
-        startY: 35,
-        head: head,
-        body: body,
-        foot: foot,
-        showFoot: 'lastPage',
-        theme: 'striped',
-        headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
-        footStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
-        styles: { fontSize: 8, cellPadding: 3 },
-      });
-
+      autoTable(doc, { startY: 35, head: head, body: body, foot: foot, showFoot: 'lastPage', theme: 'striped', headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' }, footStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 }, });
       doc.save(`CRM_FIX_${selectedRecordContractor}_${activeTab}_${sheetName}.pdf`);
-    } catch (error) {
-      console.error(error);
-      alert("Error generating PDF. Please check your browser settings.");
-    }
+    } catch (error) { alert("Error generating PDF."); }
   };
 
-  // --- TEAM MANAGEMENT ACTION ---
   const handleCreateSupervisor = async (e) => {
     e.preventDefault();
     if (!newSupEmail || !newSupPassword) return;
-    setIsCreatingSup(true);
-    setTeamMessage({ text: "Authorizing secure link...", type: "loading" });
-
+    setIsCreatingSup(true); setTeamMessage({ text: "Authorizing secure link...", type: "loading" });
     try {
       await createUserWithEmailAndPassword(secondaryAuth, newSupEmail, newSupPassword);
-      await setDoc(doc(db, "supervisors", newSupEmail.toLowerCase()), {
-        name: newSupName || "Unnamed Supervisor",
-        email: newSupEmail.toLowerCase(),
-        createdAt: Date.now(),
-        createdBy: currentUser.email
-      });
-
+      await setDoc(doc(db, "supervisors", newSupEmail.toLowerCase()), { name: newSupName || "Unnamed Supervisor", email: newSupEmail.toLowerCase(), createdAt: Date.now(), createdBy: currentUser.email });
       setTeamMessage({ text: `Success! ${newSupName || newSupEmail} is authorized.`, type: "success" });
       setNewSupName(""); setNewSupEmail(""); setNewSupPassword("");
-    } catch (error) {
-      setTeamMessage({ text: error.message, type: "error" });
-    }
+    } catch (error) { setTeamMessage({ text: error.message, type: "error" }); }
     setIsCreatingSup(false);
   };
 
-  // --- SITE MANAGEMENT ACTION ---
   const handleAddNewSite = async (e) => {
     e.preventDefault();
-    const code = newSiteCode.trim().toUpperCase();
-    const name = newSiteName.trim();
+    const code = newSiteCode.trim().toUpperCase(); const name = newSiteName.trim();
     if (!code) return;
-
     const finalSiteString = name ? `${code}|${name}` : code;
-
-    // FIX: Instead of blocking it, we filter out the old raw code and UPGRADE it!
     const filteredSites = masterSites.filter(s => (s.includes('|') ? s.split('|')[0] : s) !== code);
     const updatedSites = [...filteredSites, finalSiteString].sort();
-
     try {
       await setDoc(doc(db, "master_data", "sites"), { list: updatedSites });
-      setMasterSites(updatedSites);
-      setNewSiteCode("");
-      setNewSiteName("");
-      alert(`Success! Site ${code} has been updated to "${name || code}".`);
+      setMasterSites(updatedSites); setNewSiteCode(""); setNewSiteName(""); alert(`Success! Site updated.`);
     } catch (err) { alert("Error pushing new site to cloud."); }
   };
 
@@ -789,9 +827,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     <div key={idx} className="flex justify-between items-center p-3 hover:bg-gray-50 transition-colors border-b border-gray-50">
       <div className="min-w-0 flex-1">
         <p className="text-xs font-black text-gray-900 truncate uppercase">{row.worker}</p>
-        <p className="text-[10px] text-gray-400 font-bold mt-0.5">
-          {row.regDays} Days <span className="text-blue-500 font-black">+{row.otHours}h OT</span>
-        </p>
+        <p className="text-[10px] text-gray-400 font-bold mt-0.5">{row.regDays} Days <span className="text-blue-500 font-black">+{row.otHours}h OT</span></p>
       </div>
       <div className="text-right shrink-0 ml-3">
         <p className="text-[8px] uppercase font-bold text-emerald-600/70 mb-0.5">Total Payout</p>
@@ -819,12 +855,29 @@ export default function AdminDashboard({ currentUser, onLogout }) {
           <span className="font-black text-gray-900 text-sm tracking-tight">CRM_FIX <span className="text-gray-400 font-medium hidden sm:inline">| Master Admin</span></span>
         </div>
         <div className="flex items-center gap-3 md:gap-4">
+
+          {/* NEW: TEST MODE TOGGLE */}
+          <div className="flex items-center gap-1 md:gap-2 bg-gray-50 border border-gray-200 p-1.5 rounded-xl">
+            <span className={`text-[9px] md:text-[10px] font-black px-1 md:px-2 ${!isTestMode ? 'text-emerald-600' : 'text-gray-400'}`}>LIVE</span>
+            <button onClick={() => { setIsTestMode(!isTestMode); setDashboardTab('logs'); }} className={`relative w-10 h-5 rounded-full transition-colors shadow-inner ${isTestMode ? 'bg-yellow-400' : 'bg-gray-300'}`}>
+              <span className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all shadow-sm ${isTestMode ? 'right-1' : 'left-1'}`} />
+            </button>
+            <span className={`text-[9px] md:text-[10px] font-black px-1 md:px-2 ${isTestMode ? 'text-yellow-600' : 'text-gray-400'}`}>TEST</span>
+          </div>
+
           <button onClick={fetchData} disabled={isLoadingRecords} className="p-2 bg-gray-100 hover:bg-blue-50 text-gray-600 hover:text-blue-600 rounded-xl transition-all" title="Sync All Records">
             <RefreshCw className={`w-3.5 h-3.5 ${isLoadingRecords ? 'animate-spin text-blue-500' : ''}`} />
           </button>
           <button onClick={onLogout} className="text-xs font-bold bg-gray-100 hover:bg-red-50 hover:text-red-600 text-gray-600 p-2 md:px-3 md:py-1.5 rounded-xl flex items-center gap-2 transition-colors"><LogOut className="w-4 h-4 md:w-3.5 md:h-3.5" /> <span className="hidden md:block">Sign Out</span></button>
         </div>
       </header>
+
+      {/* NEW: GLOBAL WARNING BANNER */}
+      {isTestMode && (
+        <div className="bg-yellow-400 text-yellow-900 py-2 px-4 text-center text-[11px] font-black uppercase tracking-widest shadow-md flex items-center justify-center gap-2 sticky top-[60px] z-40">
+          <AlertCircle className="w-4 h-4" /> TEST MODE ACTIVE — ALL DATA IS SAVED TO A FAKE ISOLATED DATABASE
+        </div>
+      )}
 
       <>
         <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
@@ -1098,6 +1151,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                 )}
               </div>
             )}
+
             {/* TAB 4: AUDIT LOGS */}
             {dashboardTab === 'logs' && (
               <div className="max-w-4xl mx-auto">
@@ -1135,7 +1189,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                                 {expandedLogId === log.id ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                                 {expandedLogId === log.id ? 'Hide Roster' : 'View Roster'}
                               </button>
-                              
+
                               <div className={`px-3 py-2 rounded-xl border text-right flex-1 md:flex-none ${log.isEdited ? 'bg-white border-yellow-200' : 'bg-white border-gray-200'}`}>
                                 <p className="text-[9px] text-gray-400 font-black uppercase tracking-wider mb-0.5">Submitted By</p>
                                 <p className="text-xs font-bold text-blue-600">{log.submittedBy || "Unknown"}</p>
@@ -1150,7 +1204,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                               {['Mason', 'HalfMason', 'Helper'].map(type => {
                                 const catWorkers = log.workers.filter(w => w.type === type);
                                 if (catWorkers.length === 0) return null;
-                                
+
                                 const title = type === 'HalfMason' ? 'Half Masons' : type + 's';
                                 const badgeClass = type === 'Mason' ? 'bg-blue-100 text-blue-700' : type === 'HalfMason' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700';
 
@@ -1205,26 +1259,39 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                     ) : (
                       pendingRequests.map(req => (
                         <div key={req.id} className="p-4 md:p-5 rounded-2xl border bg-white border-rose-200 shadow-[0_4px_15px_-3px_rgba(244,63,94,0.1)] flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-all">
-                          <div>
+                          <div className="flex-1">
                             <div className="flex items-center gap-2 mb-1.5">
-                              <span className="bg-rose-100 text-rose-700 text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider">
-                                {req.type === 'backdate' ? 'Past Date Unlock' : 'Edit Request'}
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider ${req.type === 'new_worker' ? 'bg-orange-100 text-orange-700' : 'bg-rose-100 text-rose-700'}`}>
+                                {req.type === 'backdate' ? 'Past Date Unlock' : req.type === 'new_worker' ? 'New Worker Alert' : 'Edit Request'}
                               </span>
                               <span className="font-black text-gray-900 text-sm">{req.site}</span>
                               <span className="text-gray-400 font-bold text-xs uppercase tracking-wider">| {req.date}</span>
                             </div>
                             <h4 className="font-black text-gray-900 text-base">
-                              {req.submittedBy.split('@')[0]} wants to {req.type === 'backdate' ? 'submit missing attendance' : 'edit an existing log'}
+                              {req.type === 'new_worker'
+                                ? <>{req.submittedBy.split('@')[0]} added <span className="text-blue-600">{req.workerName}</span> ({req.workerType}) to {req.contractor}'s team.</>
+                                : <>{req.submittedBy.split('@')[0]} wants to {req.type === 'backdate' ? 'submit missing attendance' : 'edit an existing log'}</>
+                              }
                             </h4>
                           </div>
 
-                          <div className="w-full md:w-auto flex items-center justify-end gap-2">
-                            <button onClick={() => handleRequestAction(req.id, 'denied')} className="flex-1 md:flex-none px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-black text-xs rounded-xl transition-colors">
-                              Deny
-                            </button>
-                            <button onClick={() => handleRequestAction(req.id, 'approved')} className="flex-1 md:flex-none px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl transition-colors flex items-center justify-center gap-2 shadow-sm">
-                              <CheckCircle className="w-4 h-4" /> Approve
-                            </button>
+                          <div className="w-full md:w-auto flex flex-col items-end gap-2 shrink-0">
+                            {approvingWorkerReq?.id === req.id ? (
+                              <div className="flex items-center gap-2 bg-orange-50 p-2 rounded-xl border border-orange-200 w-full md:w-auto">
+                                <input type="number" placeholder="Enter Daily Wage (₹)" value={newWorkerWage} onChange={e => setNewWorkerWage(e.target.value)} className="w-40 px-3 py-2 text-sm font-bold border border-orange-200 rounded-lg outline-none focus:ring-2 focus:ring-orange-500/30" autoFocus />
+                                <button onClick={() => setApprovingWorkerReq(null)} className="px-3 py-2 text-xs font-bold text-gray-500 hover:bg-gray-200 rounded-lg">Cancel</button>
+                                <button onClick={() => handleApproveNewWorker(req)} className="px-4 py-2 bg-emerald-600 text-white font-black text-xs rounded-lg shadow-sm hover:bg-emerald-700 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Confirm</button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 w-full md:w-auto">
+                                <button onClick={() => handleRequestAction(req, 'denied')} className="flex-1 md:flex-none px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-black text-xs rounded-xl transition-colors">
+                                  Deny
+                                </button>
+                                <button onClick={() => handleRequestAction(req, 'approved')} className="flex-1 md:flex-none px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl transition-colors flex items-center justify-center gap-2 shadow-sm">
+                                  <CheckCircle className="w-4 h-4" /> Approve
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       ))
@@ -1316,6 +1383,24 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                       </button>
                     </form>
                   </div>
+
+                  {/* NEW: ACTIVE SITES LIST & DELETE */}
+                  {masterSites.length > 0 && (
+                    <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6 text-left mt-6">
+                      <h3 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2"><MapPin className="w-4 h-4 text-blue-500" /> Manage Active Sites</h3>
+                      <div className="flex flex-wrap gap-2">
+                        {masterSites.map((site, idx) => (
+                          <div key={idx} className="bg-white border border-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 shadow-sm">
+                            {site.includes('|') ? `${site.split('|')[0]} - ${site.split('|')[1]}` : site}
+                            <button onClick={() => handleDeleteSite(site)} className="text-gray-400 hover:text-red-500 transition-colors bg-gray-50 hover:bg-red-50 rounded p-0.5" title="Delete Site">
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               </div>
             )}
@@ -1357,7 +1442,6 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                         <h3 className="text-lg font-black text-gray-900">{c}</h3>
                         <p className="text-[10px] font-bold uppercase tracking-widest mt-1 text-gray-400">{hasData ? 'View Analytics' : 'No Data'}</p>
 
-                        {/* FIX 4: Individual Sheet Delete Button */}
                         {hasData && loadedSheetId && (
                           <button onClick={(e) => deleteContractorRecord(c, e)} className="absolute top-4 right-4 p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all shadow-sm" title="Delete Contractor Data">
                             <Trash2 className="w-4 h-4" />

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  LayoutGrid, Search, Save, LogOut, Calendar, Users, MapPin, HardHat, ChevronDown, Clock, Edit2, AlertCircle, RefreshCw, Eye, EyeOff
+  LayoutGrid, Search, Save, LogOut, Calendar, Users, MapPin, HardHat, ChevronDown, Clock, Edit2, AlertCircle, RefreshCw, Eye, EyeOff, Plus
 } from 'lucide-react';
 import { collection, addDoc, getDocs, doc, query, where, runTransaction, updateDoc } from "firebase/firestore";
 import { db } from '../firebase';
@@ -19,12 +19,11 @@ const getPeriodKey = (dateString) => {
   return { id: `${year}-${month}-${half}`, displayName: `${displayMonth} ${displayRange} ${year}` };
 };
 
-// --- NEW: Helper Functions for Site Names ---
 const getSiteCode = (siteStr) => siteStr.includes('|') ? siteStr.split('|')[0] : siteStr;
 const getSiteDisplay = (siteStr) => {
   if (siteStr.includes('|')) {
     const parts = siteStr.split('|');
-    return `${parts[1]} (${parts[0]})`; // Returns "Full Name (CODE)"
+    return `${parts[1]} (${parts[0]})`;
   }
   return siteStr;
 };
@@ -35,7 +34,14 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
   const [masterWorkers, setMasterWorkers] = useState([]);
   const [myLogs, setMyLogs] = useState([]);
   const [expandedLogId, setExpandedLogId] = useState(null);
-  const [myRequests, setMyRequests] = useState([]); // Tracks approvals
+
+  // --- TEST MODE DETECTOR ---
+  const isTestMode = currentUser?.email?.toLowerCase().includes('test');
+  const COLL_LOGS = isTestMode ? "test_daily_logs" : "daily_logs";
+  const COLL_REQS = isTestMode ? "test_edit_requests" : "edit_requests";
+  const COLL_SHEETS = isTestMode ? "test_attendance_sheets" : "attendance_sheets";
+
+  const [myRequests, setMyRequests] = useState([]);
 
   // Attendance Form States
   const [supDate, setSupDate] = useState(new Date().toISOString().split('T')[0]);
@@ -49,6 +55,11 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
   const [isSiteDropdownOpen, setIsSiteDropdownOpen] = useState(false);
   const [isTeamDropdownOpen, setIsTeamDropdownOpen] = useState(false);
   const [siteSearchQuery, setSiteSearchQuery] = useState("");
+
+  // PROVISIONAL WORKER STATES
+  const [showAddWorker, setShowAddWorker] = useState(false);
+  const [newWorkerName, setNewWorkerName] = useState("");
+  const [newWorkerType, setNewWorkerType] = useState("Helper");
 
   const defaultContractors = ["Arvind", "Laljeet", "Deepak"];
   const dynamicContractors = Array.from(new Set([...defaultContractors, ...masterWorkers.map(w => w.contractor)])).filter(Boolean);
@@ -65,7 +76,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
         });
 
         if (loadedSites.length === 0) {
-          const sheetsSnap = await getDocs(collection(db, "attendance_sheets"));
+          const sheetsSnap = await getDocs(collection(db, COLL_SHEETS));
           let aggregatedSites = new Set();
           sheetsSnap.forEach(docSnap => {
             const data = docSnap.data();
@@ -85,28 +96,24 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
   const fetchHistoryData = async () => {
     if (!currentUser?.email) return;
     try {
-      // Fetch Logs
-      const qLogs = query(collection(db, "daily_logs"), where("submittedBy", "==", currentUser.email));
+      const qLogs = query(collection(db, COLL_LOGS), where("submittedBy", "==", currentUser.email));
       const snapLogs = await getDocs(qLogs);
       const logs = [];
       snapLogs.forEach(d => logs.push({ id: d.id, ...d.data() }));
       logs.sort((a, b) => b.timestamp - a.timestamp);
       setMyLogs(logs);
 
-      // Fetch Edit Requests (Permissions)
-      const qReq = query(collection(db, "edit_requests"), where("submittedBy", "==", currentUser.email));
+      const qReq = query(collection(db, COLL_REQS), where("submittedBy", "==", currentUser.email));
       const snapReq = await getDocs(qReq);
       const reqs = [];
       snapReq.forEach(d => reqs.push({ id: d.id, ...d.data() }));
       setMyRequests(reqs);
-
     } catch (err) { console.error("Error fetching history data:", err); }
   };
 
   useEffect(() => { fetchHistoryData(); }, [currentUser]);
   useEffect(() => { if (activePortalTab === 'history') fetchHistoryData(); }, [activePortalTab]);
 
-  // Prevent Back Gesture from exiting the web app
   useEffect(() => {
     window.history.pushState({ noBackExitsApp: true }, '');
     const handlePopState = (e) => {
@@ -129,7 +136,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
   }, [supContractor, masterWorkers, editingLog]);
 
   const handleAttendanceChange = (name, status) => {
-    setSupAttendance(prev => ({ ...prev, [name]: { ...prev[name], status: status, ot: status === 'absent' ? '' : prev[name].ot } }));
+    setSupAttendance(prev => ({ ...prev, [name]: { ...prev[name], status: status } }));
   };
 
   const handleOTChange = (name, otValue) => {
@@ -138,6 +145,29 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
     if (val > 12) val = 12;
     if (val < 0) val = 0;
     setSupAttendance(prev => ({ ...prev, [name]: { ...prev[name], ot: isNaN(val) ? '' : val } }));
+  };
+
+  const handleAddNewWorkerLocal = () => {
+    if (!newWorkerName.trim()) return;
+    const nameCaps = newWorkerName.trim().toUpperCase();
+
+    if (masterWorkers.some(w => w.name.toUpperCase() === nameCaps && w.contractor === supContractor)) {
+      return alert("This worker already exists in the roster!");
+    }
+
+    const newW = {
+      name: nameCaps,
+      type: newWorkerType,
+      contractor: supContractor,
+      wage: 0,
+      otRate: 0,
+      isProvisional: true
+    };
+
+    setMasterWorkers(prev => [...prev, newW]);
+    setSupAttendance(prev => ({ ...prev, [nameCaps]: { status: 'present', ot: '' } }));
+    setShowAddWorker(false);
+    setNewWorkerName("");
   };
 
   const sortWorkers = (workersList) => {
@@ -169,16 +199,13 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
     if (!supSite || !supContractor) return alert("Please select a site and contractor.");
     setIsSubmittingLog(true);
 
-    // --- SECURITY WALL START ---
     const todayStr = new Date().toISOString().split('T')[0];
 
-    // 1. Block Future Attendance (Tomorrow or later)
     if (supDate > todayStr) {
       setIsSubmittingLog(false);
       return alert("🚨 NOT ALLOWED: You cannot submit attendance for tomorrow or any future date.");
     }
 
-    // 2. Block Past Attendance (Unless specifically Approved by Admin)
     if (supDate < todayStr && !editingLog) {
       const hasBackdateApproval = myRequests.find(r => r.date === supDate && r.status === 'approved' && r.type === 'backdate');
       if (!hasBackdateApproval) {
@@ -187,9 +214,8 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
       }
     }
 
-    // 3. Block Duplicate Attendance (Same Contractor + Same Site + Same Date)
     if (!editingLog) {
-      const duplicateCheckQuery = query(collection(db, "daily_logs"),
+      const duplicateCheckQuery = query(collection(db, COLL_LOGS),
         where("date", "==", supDate),
         where("site", "==", supSite),
         where("contractor", "==", supContractor)
@@ -201,7 +227,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
         return alert(`🛑 DUPLICATE ATTENDANCE: You have already submitted attendance for ${supContractor} at this site today!\n\nIf you need to make changes, go to "My Logs" and click 'Edit Log'.`);
       }
     }
-    // --- SECURITY WALL END ---
 
     const period = getPeriodKey(supDate);
     const dayNum = parseInt(supDate.split('-')[2]);
@@ -212,15 +237,29 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
 
     Object.keys(supAttendance).forEach(name => {
       const rec = supAttendance[name];
-      if (rec.status !== 'absent') {
+      const hasHours = parseFloat(rec.ot) > 0;
+
+      // Let them through if they are present OR if they have hours logged
+      if (rec.status !== 'absent' || hasHours) {
         const workerInfo = masterWorkers.find(w => w.name === name && w.contractor === supContractor);
         if (workerInfo) {
-          const regDays = rec.status === '2P' ? 2.0 : rec.status === 'half' ? 0.5 : 1.0;
+          // Strictly apply 0 base days if they are marked Absent
+          const regDays = rec.status === '2P' ? 2.0 : rec.status === 'half' ? 0.5 : rec.status === 'present' ? 1.0 : 0;
           const otHours = parseFloat(rec.ot) || 0;
           const bCost = regDays * (workerInfo.wage || 0);
           const oCost = otHours * (workerInfo.otRate || ((workerInfo.wage || 0) / 8));
 
-          logWorkers.push({ worker: workerInfo.name, type: workerInfo.type, contractor: supContractor, regDays: regDays, otHours: otHours, totalBaseCost: bCost, totalOTCost: oCost });
+          logWorkers.push({
+            worker: workerInfo.name,
+            type: workerInfo.type,
+            contractor: supContractor,
+            regDays: regDays,
+            otHours: otHours,
+            totalBaseCost: bCost,
+            totalOTCost: oCost,
+            isProvisional: workerInfo.isProvisional || false // Flags new workers
+          });
+
           dTotalBaseCost += bCost; dTotalOTCost += oCost;
           if (workerInfo.type === 'Mason') { dMasonReg += regDays; dMasonOT += otHours; }
           else if (workerInfo.type === 'HalfMason') { dHMMasonReg += regDays; dHMMasonOT += otHours; }
@@ -230,16 +269,18 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
     });
 
     if (logWorkers.length === 0 && !editingLog) {
-      alert("No workers marked present. Nothing to save.");
+      alert("No workers marked present or given hours. Nothing to save.");
       setIsSubmittingLog(false); return;
     }
 
     const todaySiteData = { site: supSite, contractor: supContractor, masonReg: dMasonReg, masonOT: dMasonOT, halfMasonReg: dHMMasonReg, halfMasonOT: dHMMasonOT, helperReg: dHelperReg, helperOT: dHelperOT, totalBaseCost: dTotalBaseCost, totalOTCost: dTotalOTCost };
     const todayDayData = { day: dayNum, site: supSite, contractor: supContractor, masonReg: dMasonReg, masonOT: dMasonOT, halfMasonReg: dHMMasonReg, halfMasonOT: dHMMasonOT, helperReg: dHelperReg, helperOT: dHelperOT, totalBaseCost: dTotalBaseCost, totalOTCost: dTotalOTCost };
 
+    let createdLogId = editingLog ? editingLog.id : null;
+
     try {
       await runTransaction(db, async (transaction) => {
-        const sheetRef = doc(db, "attendance_sheets", period.id);
+        const sheetRef = doc(db, COLL_SHEETS, period.id);
         const sheetSnap = await transaction.get(sheetRef);
         let data = sheetSnap.exists() ? sheetSnap.data() : { sheetName: period.displayName, siteData: [], dayData: [], workerData: [], createdAt: Date.now() };
 
@@ -299,7 +340,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
 
       if (editingLog) {
         const newEditCount = (editingLog.editCount || 0) + 1;
-        await updateDoc(doc(db, "daily_logs", editingLog.id), {
+        await updateDoc(doc(db, COLL_LOGS, editingLog.id), {
           workers: logWorkers,
           isEdited: true,
           editTimestamp: Date.now(),
@@ -309,17 +350,34 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
         if (!isToday(editingLog.date)) {
           const reqsToClose = myRequests.filter(r => r.logId === editingLog.id && (r.status === 'approved' || r.status === 'pending'));
           for (const req of reqsToClose) {
-            await updateDoc(doc(db, "edit_requests", req.id), { status: 'completed' });
+            await updateDoc(doc(db, COLL_REQS, req.id), { status: 'completed' });
           }
         }
-
         alert(`Attendance securely updated!`);
       } else {
-        await addDoc(collection(db, "daily_logs"), {
+        const newLogRef = await addDoc(collection(db, COLL_LOGS), {
           date: supDate, site: supSite, contractor: supContractor, workers: logWorkers,
           timestamp: Date.now(), submittedBy: currentUser?.email || "Unknown User"
         });
+        createdLogId = newLogRef.id;
         alert(`Attendance locked into bucket: ${period.displayName}!`);
+      }
+
+      // --- SEND PROVISIONAL WORKER ADMIN REQUESTS ---
+      const provWorkers = logWorkers.filter(w => w.isProvisional);
+      for (const pw of provWorkers) {
+        await addDoc(collection(db, COLL_REQS), {
+          logId: createdLogId,
+          date: supDate,
+          site: supSite,
+          contractor: supContractor,
+          submittedBy: currentUser.email,
+          timestamp: Date.now(),
+          status: 'pending',
+          type: 'new_worker',
+          workerName: pw.worker,
+          workerType: pw.type
+        });
       }
 
       setSupContractor(""); setWorkerSearch(""); setEditingLog(null);
@@ -332,7 +390,21 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
     setSupDate(log.date); setSupSite(log.site); setSupContractor(log.contractor);
     const contractorWorkers = masterWorkers.filter(w => w.contractor === log.contractor);
 
-    const restoredState = contractorWorkers.reduce((acc, w) => {
+    // Make sure we bring provisional workers back locally so they don't disappear on edit
+    const provisionalInLog = log.workers.filter(w => w.isProvisional);
+    const combinedWorkers = [...contractorWorkers];
+
+    provisionalInLog.forEach(pw => {
+      if (!combinedWorkers.some(cw => cw.name === pw.worker)) {
+        combinedWorkers.push({ name: pw.worker, type: pw.type, contractor: log.contractor, wage: 0, otRate: 0, isProvisional: true });
+      }
+    });
+    setMasterWorkers(prev => {
+      const allOthers = prev.filter(p => p.contractor !== log.contractor);
+      return [...allOthers, ...combinedWorkers];
+    });
+
+    const restoredState = combinedWorkers.reduce((acc, w) => {
       const logged = log.workers.find(lw => lw.worker === w.name);
       if (logged) {
         let st = 'present';
@@ -350,7 +422,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
 
   const handleRequestEdit = async (log) => {
     try {
-      await addDoc(collection(db, "edit_requests"), {
+      await addDoc(collection(db, COLL_REQS), {
         logId: log.id, date: log.date, site: log.site, contractor: log.contractor,
         submittedBy: currentUser.email, timestamp: Date.now(), status: 'pending', type: 'edit'
       });
@@ -361,7 +433,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
 
   const handleRequestBackdate = async () => {
     try {
-      await addDoc(collection(db, "edit_requests"), {
+      await addDoc(collection(db, COLL_REQS), {
         date: supDate, submittedBy: currentUser.email, timestamp: Date.now(), status: 'pending', type: 'backdate'
       });
       fetchHistoryData();
@@ -382,8 +454,11 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
           const rec = supAttendance[worker.name] || {};
           const is2P = rec.status === '2P'; const isP = rec.status === 'present'; const isHD = rec.status === 'half'; const isA = rec.status === 'absent';
           return (
-            <div key={worker.name} className={`px-2 md:px-3 py-2.5 rounded-xl border transition-all flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 md:gap-4 ${isA ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-blue-200 shadow-sm'}`}>
-              <p className="font-black text-gray-900 text-sm min-w-0 truncate mb-1 md:mb-0">{worker.name}</p>
+            <div key={worker.name} className={`px-2 md:px-3 py-2.5 rounded-xl border transition-all flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 md:gap-4 ${isA ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-blue-200 shadow-sm'} ${worker.isProvisional ? 'border-dashed border-orange-300' : ''}`}>
+              <div>
+                <p className="font-black text-gray-900 text-sm min-w-0 truncate">{worker.name}</p>
+                {worker.isProvisional && <p className="text-[9px] font-bold text-orange-500 uppercase tracking-widest mt-0.5">Pending Admin Approval</p>}
+              </div>
               <div className="flex items-center justify-between md:justify-end gap-1.5 shrink-0">
                 <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200/50 flex-1 md:flex-none justify-between">
                   <button onClick={() => handleAttendanceChange(worker.name, '2P')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${is2P ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>2P</button>
@@ -392,7 +467,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                   <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isA ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
                 </div>
                 <div className="w-14 shrink-0">
-                  {(!isA) && <input type="number" placeholder="OT" value={rec.ot} max="12" min="0" onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-full h-8 bg-gray-50 border border-gray-200 px-1 rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 text-center" />}
+                  <input type="number" placeholder="Hrs" value={rec.ot} max="12" min="0" onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-full h-8 bg-gray-50 border border-gray-200 px-1 rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 text-center" />
                 </div>
               </div>
             </div>
@@ -402,7 +477,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
     );
   };
 
-  // --- NEW: Calculate the display name for the Site Dropdown button ---
   const selectedSiteFull = masterSites.find(s => getSiteCode(s) === supSite);
   const displaySelectedSite = selectedSiteFull ? getSiteDisplay(selectedSiteFull) : (supSite || 'Choose Site...');
 
@@ -425,6 +499,12 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
           </button>
         </div>
       </header>
+
+      {isTestMode && (
+        <div className="bg-yellow-400 text-yellow-900 py-2 px-4 text-center text-[11px] font-black uppercase tracking-widest shadow-md flex items-center justify-center gap-2 sticky top-[60px] z-40">
+          <AlertCircle className="w-4 h-4" /> TEST MODE ACTIVE — DATA WILL NOT AFFECT LIVE FINANCIALS
+        </div>
+      )}
 
       {isOverdue && !editingLog && (
         <div className="bg-red-500 text-white text-[10px] md:text-xs font-black text-center py-2.5 px-4 shadow-md animate-pulse flex items-center justify-center gap-1.5">
@@ -449,8 +529,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none"><Calendar className="h-4 w-4 text-emerald-500" /></div>
                   <input type="date" disabled={editingLog} max={new Date().toISOString().split('T')[0]} value={supDate} onChange={(e) => setSupDate(e.target.value)} className="w-full bg-gray-50 hover:bg-white border border-gray-200 pl-10 pr-3 py-3 rounded-xl text-sm font-black text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm transition-all cursor-pointer relative [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:h-full [&::-webkit-calendar-picker-indicator]:cursor-pointer z-10 bg-transparent" />
                 </div>
-
-                {/* NEW: Request Backdate UI */}
                 {supDate < new Date().toISOString().split('T')[0] && !editingLog && (
                   <div className="mt-1 ml-1 text-[10px] font-bold">
                     {myRequests.find(r => r.date === supDate && r.status === 'approved' && r.type === 'backdate') ? (
@@ -470,7 +548,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                   {isSiteDropdownOpen && <div className="fixed inset-0 z-40" onClick={() => setIsSiteDropdownOpen(false)}></div>}
                   <div className={`w-full ${editingLog ? 'bg-gray-100 cursor-not-allowed' : 'bg-gray-50 hover:bg-white cursor-pointer'} border border-gray-200 pl-10 pr-10 py-3 rounded-xl text-sm font-black text-gray-800 shadow-sm transition-all relative z-50 flex items-center`} onClick={() => { if (!editingLog) { setIsSiteDropdownOpen(!isSiteDropdownOpen); setIsTeamDropdownOpen(false); setSiteSearchQuery(""); } }}>
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none"><MapPin className={`h-4 w-4 ${supSite ? 'text-emerald-500' : 'text-gray-400'}`} /></div>
-                    {/* NEW: Displays the full decoded name */}
                     <span className={supSite ? 'text-gray-900 truncate' : 'text-gray-400'}>{displaySelectedSite}</span>
                     <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none"><ChevronDown className={`h-4 w-4 transition-transform duration-200 ${isSiteDropdownOpen ? 'rotate-180 text-emerald-500' : 'text-gray-400'}`} /></div>
                   </div>
@@ -483,7 +560,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                     </div>
                     <div className="max-h-52 overflow-y-auto custom-scrollbar py-1">
                       {masterSites.filter(site => getSiteDisplay(site).toLowerCase().includes(siteSearchQuery.toLowerCase())).map(site => {
-                        // NEW: Extract code for state, display string for UI
                         const code = getSiteCode(site);
                         const display = getSiteDisplay(site);
                         return (
@@ -522,13 +598,31 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                 <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-2 mb-4">
                   <div className="flex items-center justify-between sm:justify-start gap-3">
                     <h3 className="font-black text-gray-900 text-base md:text-lg">Roster <span className="text-gray-400">({activeContractorWorkers.length})</span></h3>
-                    <span className="bg-gray-100 text-gray-500 text-[8px] md:text-[9px] font-bold px-2 py-1 rounded md:rounded-md uppercase tracking-wider">Default: Absent</span>
+                    <button onClick={() => setShowAddWorker(!showAddWorker)} className="text-[10px] font-black bg-blue-50 text-blue-600 px-2 py-1 rounded-md uppercase tracking-wider hover:bg-blue-100 transition-colors flex items-center gap-1">
+                      <Plus className="w-3 h-3" /> Add Worker
+                    </button>
                   </div>
                   <div className="relative w-full sm:w-48 md:w-64">
                     <Search className="w-3.5 h-3.5 md:w-4 md:h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input type="text" placeholder="Search name..." value={workerSearch} onChange={(e) => setWorkerSearch(e.target.value)} className="w-full pl-8 md:pl-9 pr-3 md:pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg md:rounded-xl text-xs md:text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:bg-white" />
                   </div>
                 </div>
+
+                {/* ADD PROVISIONAL WORKER UI */}
+                {showAddWorker && (
+                  <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100 flex flex-col sm:flex-row gap-2 mb-4 animate-in fade-in slide-in-from-top-2 shadow-inner">
+                    <input type="text" placeholder="Worker Name..." value={newWorkerName} onChange={(e) => setNewWorkerName(e.target.value)} className="flex-1 px-3 py-2 text-sm font-bold rounded-lg border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+                    <select value={newWorkerType} onChange={(e) => setNewWorkerType(e.target.value)} className="px-3 py-2 text-sm font-bold rounded-lg border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 bg-white cursor-pointer">
+                      <option value="Helper">Helper</option>
+                      <option value="HalfMason">Half Mason</option>
+                      <option value="Mason">Mason</option>
+                    </select>
+                    <div className="flex gap-2">
+                      <button onClick={() => setShowAddWorker(false)} className="px-3 py-2 text-xs font-black text-gray-500 hover:bg-gray-100 rounded-lg transition-colors flex-1 sm:flex-none">Cancel</button>
+                      <button onClick={handleAddNewWorkerLocal} className="px-4 py-2 text-xs font-black bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 transition-colors flex-1 sm:flex-none">Save</button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-6">
                   {renderCategoryUI(masons, "MASONS", "text-blue-500", "bg-blue-500")}
@@ -570,7 +664,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                   const editCount = log.editCount || 0;
                   const canEdit = (isToday(log.date) && editCount < 3) || approvedReq;
 
-                  // NEW: Translates the stored code back to the Full Name for history display
                   const sFull = masterSites.find(s => getSiteCode(s) === log.site);
                   const displayLogSite = sFull ? getSiteDisplay(sFull) : log.site;
 
@@ -592,7 +685,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                         </div>
 
                         <div className="w-full sm:w-auto flex flex-wrap gap-2">
-                          {/* VIEW WORKERS TOGGLE */}
                           <button onClick={() => setExpandedLogId(expandedLogId === log.id ? null : log.id)} className={`flex-1 sm:flex-none px-3 py-2 font-black text-xs rounded-xl transition-colors flex items-center justify-center gap-1.5 border ${expandedLogId === log.id ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
                             {expandedLogId === log.id ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                             {expandedLogId === log.id ? 'Hide Roster' : 'View Roster'}
@@ -615,7 +707,6 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                         </div>
                       </div>
 
-                      {/* EXPANDABLE GROUPED WORKER LIST */}
                       {expandedLogId === log.id && log.workers && (
                         <div className="mt-4 pt-4 border-t border-gray-100 animate-in slide-in-from-top-2 fade-in duration-300">
                           {['Mason', 'HalfMason', 'Helper'].map(type => {
@@ -631,7 +722,10 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                                   {catWorkers.map((w, i) => (
                                     <div key={i} className="flex justify-between items-center bg-gray-50/80 px-3 py-2 rounded-lg border border-gray-100">
-                                      <span className="text-xs font-black text-gray-800">{w.worker}</span>
+                                      <div>
+                                        <span className="text-xs font-black text-gray-800">{w.worker}</span>
+                                        {w.isProvisional && <span className="ml-1 text-[8px] bg-orange-100 text-orange-600 px-1 py-0.5 rounded font-black uppercase">Pending</span>}
+                                      </div>
                                       <div className="text-[10px] font-bold text-right tracking-tight">
                                         <span className={w.regDays === 0.5 ? "text-yellow-600" : w.regDays === 2.0 ? "text-indigo-600" : "text-emerald-600"}>
                                           {w.regDays === 0.5 ? 'HD' : w.regDays === 2.0 ? '2P' : 'P'}
