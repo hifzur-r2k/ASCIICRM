@@ -7,7 +7,7 @@ import { signInWithEmailAndPassword } from 'firebase/auth';
 import {
   Upload, Download, FileText, UploadCloud, LayoutGrid, Search,
   Save, Trash2, Database, Clock, Check, BarChart3,
-  LogOut, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, RefreshCw, ClipboardList, AlertCircle, CheckCircle, Edit2, Eye, EyeOff, MapPin
+  LogOut, Plus, X, Layers, IndianRupee, Calendar, Shield, Users, RefreshCw, ClipboardList, AlertCircle, CheckCircle, Edit2, Eye, EyeOff, MapPin, Printer
 } from 'lucide-react';
 import { collection, getDocs, setDoc, doc, deleteDoc, updateDoc, onSnapshot, query, where, orderBy, limit } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
@@ -28,6 +28,15 @@ const getPeriodKey = (dateString) => {
     id: `${year}-${month}-${half}`,
     displayName: `${displayMonth} ${displayRange} ${year}`
   };
+};
+const getSiteCode = (siteStr) => siteStr.includes('|') ? siteStr.split('|')[0] : siteStr;
+
+const getSiteDisplay = (siteStr) => {
+  if (siteStr.includes('|')) {
+    const parts = siteStr.split('|');
+    return `${parts[1]} (${parts[0]})`;
+  }
+  return siteStr;
 };
 
 export default function AdminDashboard({ currentUser, onLogout }) {
@@ -83,6 +92,18 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const [newSiteName, setNewSiteName] = useState("");
   const [loadedSheetId, setLoadedSheetId] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
+
+  // --- DAILY REPORT STATES ---
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
+  const [reportContractor, setReportContractor] = useState("");
+
+  // --- SMART SITE DECODER ---
+  const getFullSiteName = (codeToFind) => {
+    if (!codeToFind) return "Unknown Site";
+    const match = masterSites.find(s => getSiteCode(s).toLowerCase() === codeToFind.toLowerCase());
+    return match ? getSiteDisplay(match) : codeToFind;
+  };
 
   const defaultContractors = ["Arvind", "Laljeet", "Deepak"];
   const dynamicContractors = Array.from(new Set([...defaultContractors, ...masterWorkers.map(w => w.contractor)])).filter(Boolean);
@@ -187,7 +208,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const handleApproveNewWorker = async (req) => {
     if (!newWorkerWage || isNaN(newWorkerWage)) return alert("Please enter a valid daily wage.");
     const wageNum = parseFloat(newWorkerWage);
-    
+
     try {
       // 1. Add to Master Roster permanently
       const newWorker = {
@@ -575,7 +596,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       const sMonth = sheet.id.substring(0, 7);
 
       (sheet.dayData || []).forEach(d => {
-        if (d.site.toLowerCase() === targetSite) {
+        if (d.site.toLowerCase() === targetSite || getFullSiteName(d.site).toLowerCase().includes(targetSite)) {
           const recordDateStr = `${sMonth}-${String(d.day).padStart(2, '0')}`;
           let inRange = true;
           if (startDate && recordDateStr < startDate) inRange = false;
@@ -652,7 +673,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
   const activeData = activeTab === 'site' ? siteData : activeTab === 'day' ? dayData : workerData;
   const contractorFilteredData = selectedRecordContractor ? activeData.filter(row => row.contractor === selectedRecordContractor) : activeData;
-  const filteredData = contractorFilteredData.filter(row => row.site ? row.site.toLowerCase().includes(searchQuery.toLowerCase()) : row.worker.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredData = contractorFilteredData.filter(row => row.site ? getFullSiteName(row.site).toLowerCase().includes(searchQuery.toLowerCase()) : row.worker.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const totals = filteredData.reduce((acc, row) => {
     if (activeTab === 'worker') {
@@ -1107,7 +1128,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                           <tbody>
                             {multiSiteData.matrix.map((row, idx) => (
                               <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50/60 transition-colors">
-                                <td className="px-3.5 py-4 font-black text-gray-800 border-r border-gray-50">{row.site}</td>
+                                <td className="px-3.5 py-4 font-black text-gray-800 border-r border-gray-50">{getFullSiteName(row.site)}</td>
                                 <td className="px-3.5 py-4 text-center font-bold text-gray-400 border-r border-gray-50">{row.occurrences}</td>
                                 <td className="px-3.5 py-4 font-bold text-blue-900 border-r border-gray-50">{row.masonReg}</td>
                                 <td className="px-3.5 py-4 text-blue-700 border-r border-gray-50">{row.masonOT} <span className="text-[10px] text-gray-400">h</span></td>
@@ -1156,9 +1177,14 @@ export default function AdminDashboard({ currentUser, onLogout }) {
             {dashboardTab === 'logs' && (
               <div className="max-w-4xl mx-auto">
                 <div className="bg-white rounded-[2rem] p-6 md:p-8 shadow-sm border border-gray-100">
-                  <h2 className="text-xl md:text-2xl font-black text-gray-900 mb-6 flex items-center gap-2">
-                    <Clock className="w-6 h-6 text-orange-500" /> Audit Logs & Submissions
-                  </h2>
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                    <h2 className="text-xl md:text-2xl font-black text-gray-900 flex items-center gap-2">
+                      <Clock className="w-6 h-6 text-orange-500" /> Audit Logs & Submissions
+                    </h2>
+                    <button onClick={() => { setReportContractor(dynamicContractors[0] || ""); setShowReportModal(true); }} className="bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 px-4 py-2.5 rounded-xl font-black text-xs md:text-sm flex items-center gap-2 transition-all shadow-sm">
+                      <FileText className="w-4 h-4" /> Generate Daily Report
+                    </button>
+                  </div>
 
                   <div className="space-y-3 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
                     {dailyLogs.length === 0 ? (
@@ -1177,7 +1203,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                                     <Edit2 className="w-2.5 h-2.5" /> EDITED {log.editCount ? `(${log.editCount})` : ''}
                                   </span>
                                 )}
-                                <span className="font-bold text-gray-900 text-sm ml-1">{log.site}</span>
+                                <span className="font-bold text-gray-900 text-sm ml-1">{getFullSiteName(log.site)}</span>
                               </div>
                               <p className="text-xs text-gray-500 font-bold flex items-center gap-1">
                                 <Users className="w-3 h-3" /> {log.contractor}'s Team <span className="text-gray-300 mx-1">|</span> {log.workers?.length || 0} Workers Logged
@@ -1264,7 +1290,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                               <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider ${req.type === 'new_worker' ? 'bg-orange-100 text-orange-700' : 'bg-rose-100 text-rose-700'}`}>
                                 {req.type === 'backdate' ? 'Past Date Unlock' : req.type === 'new_worker' ? 'New Worker Alert' : 'Edit Request'}
                               </span>
-                              <span className="font-black text-gray-900 text-sm">{req.site}</span>
+                              <span className="font-black text-gray-900 text-sm">{getFullSiteName(req.site)}</span>
                               <span className="text-gray-400 font-bold text-xs uppercase tracking-wider">| {req.date}</span>
                             </div>
                             <h4 className="font-black text-gray-900 text-base">
@@ -1528,7 +1554,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                           filteredData.map((row, idx) => (
                             <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50/80 bg-white transition-colors">
                               {activeTab === 'day' && <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-bold text-gray-900">{row.day}</td>}
-                              <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-bold text-gray-700">{row.site}</td>
+                              <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-bold text-gray-700">{getFullSiteName(row.site)}</td>
                               <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-medium text-gray-900">{row.masonReg} <span className="text-xs text-gray-400">({row.masonOT}h)</span></td>
                               <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-medium text-gray-900">{row.halfMasonReg} <span className="text-xs text-gray-400">({row.halfMasonOT}h)</span></td>
                               <td className="px-4 lg:px-6 py-4 border-r border-gray-50 font-medium text-gray-900">{row.helperReg} <span className="text-xs text-gray-400">({row.helperOT}h)</span></td>
@@ -1575,7 +1601,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                           {filteredData.map((row, idx) => (
                             <div key={idx} className="bg-white p-3 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.05)] border border-gray-100 space-y-2">
                               <div className="flex justify-between items-center border-b border-gray-50 pb-1.5">
-                                <span className="text-xs font-black text-gray-800 bg-gray-100 px-2 py-1 rounded-md truncate max-w-[200px]">Site: {row.site}</span>
+                                <span className="text-xs font-black text-gray-800 bg-gray-100 px-2 py-1 rounded-md truncate max-w-[200px]">Site: {getFullSiteName(row.site)}</span>
                               </div>
                               <div className="grid grid-cols-3 gap-1.5 text-xs">
                                 <div className="bg-blue-50/50 p-1.5 rounded-lg border border-blue-100"><p className="text-blue-600/80 font-bold mb-0.5 uppercase tracking-wider text-[8px]">Mason</p><p className="text-sm font-black text-blue-900">{row.masonReg} <span className="text-[9px] font-medium text-blue-400">({row.masonOT}h)</span></p></div>
@@ -1596,7 +1622,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-1.5 mb-0.5">
                                   <span className="text-[9px] font-black text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded uppercase">Day {row.day}</span>
-                                  <p className="text-xs font-black text-gray-800 truncate">{row.site}</p>
+                                  <p className="text-xs font-black text-gray-800 truncate">{getFullSiteName(row.site)}</p>
                                 </div>
                                 <p className="text-[10px] text-gray-400 font-bold">
                                   M:{row.masonReg} <span className="text-gray-300 mx-0.5">|</span> HM:{row.halfMasonReg} <span className="text-gray-300 mx-0.5">|</span> H:{row.helperReg}
@@ -1668,6 +1694,107 @@ export default function AdminDashboard({ currentUser, onLogout }) {
           </div>
         )}
       </>
+      {/* DAILY CONTRACTOR REPORT MODAL */}
+      {showReportModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-2 sm:p-4">
+          
+          <style>
+            {`
+              @media print {
+                /* 1. Hide the background and main app */
+                body { background-color: white !important; }
+                header, .min-h-screen > :not(.fixed) { display: none !important; }
+                
+                /* 2. Reset the modal to flat document flow (Fixes the multipage overlap bug) */
+                .fixed { position: static !important; background: transparent !important; padding: 0 !important; height: auto !important; }
+                .max-h-[90vh], .overflow-y-auto { max-height: none !important; overflow: visible !important; }
+                
+                /* 3. Hide buttons on paper */
+                .print-hide { display: none !important; }
+                
+                /* 4. Stop sites from breaking in half across pages */
+                .print-section { page-break-inside: avoid !important; break-inside: avoid !important; }
+              }
+            `}
+          </style>
+
+          <div className="bg-white rounded-[1.5rem] shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] print:shadow-none print:max-w-full">
+            
+            {/* Modal Controls */}
+            <div className="p-4 sm:p-5 bg-gray-50 border-b border-gray-100 rounded-t-[1.5rem] print-hide flex flex-col sm:flex-row gap-3 justify-between items-center">
+              <div className="flex gap-2 w-full sm:w-auto">
+                <select value={reportContractor} onChange={(e) => setReportContractor(e.target.value)} className="flex-1 px-3 py-2 rounded-xl border border-gray-200 font-bold text-sm text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 shadow-sm cursor-pointer">
+                  {dynamicContractors.map(c => <option key={c} value={c}>{c}'s Team</option>)}
+                </select>
+                <input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} className="flex-1 px-3 py-2 rounded-xl border border-gray-200 font-bold text-sm text-gray-800 outline-none focus:ring-2 focus:ring-blue-500/20 shadow-sm cursor-pointer" />
+              </div>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <button onClick={() => setShowReportModal(false)} className="flex-1 sm:flex-none px-4 py-2 bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 font-black text-xs rounded-xl transition-colors">Close</button>
+                <button onClick={() => window.print()} className="flex-1 sm:flex-none px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2"><Printer className="w-4 h-4" /> Print PDF</button>
+              </div>
+            </div>
+
+            {/* Printable Document Area */}
+            <div id="printable-report" className="p-4 sm:p-6 overflow-y-auto custom-scrollbar bg-white rounded-b-[1.5rem] print:p-0">
+              
+              <div className="text-center border-b-2 border-gray-900 pb-2 mb-4">
+                <h2 className="font-black text-xl text-gray-900 tracking-tight uppercase">{reportContractor}'s Daily Attendance</h2>
+                <p className="text-xs font-bold text-gray-500 mt-0.5 flex items-center justify-center gap-1"><Calendar className="w-3 h-3" /> {new Date(reportDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+              </div>
+
+              {dailyLogs.filter(log => log.date === reportDate && log.contractor === reportContractor).length === 0 ? (
+                <div className="text-center py-6 text-gray-400 font-bold text-sm">No attendance submitted for this date.</div>
+              ) : (
+                <div className="space-y-4">
+                  {dailyLogs.filter(log => log.date === reportDate && log.contractor === reportContractor).map(log => (
+                    <div key={log.id} className="print-section border border-gray-200 rounded-xl p-3 print:border-gray-400 print:mb-4">
+                      
+                      {/* Site Header */}
+                      <h3 className="text-sm font-black text-gray-900 mb-2 bg-gray-50 p-2 rounded-lg border border-gray-200 flex items-center gap-1.5 print:bg-gray-100">
+                        <MapPin className="w-4 h-4 text-blue-500" /> {getFullSiteName(log.site)}
+                      </h3>
+
+                      {/* Workers by Category */}
+                      {['Mason', 'HalfMason', 'Helper'].map(type => {
+                        const workersInType = (log.workers || []).filter(w => w.type === type);
+                        if (workersInType.length === 0) return null;
+
+                        const title = type === 'HalfMason' ? 'HALF MASONS' : type.toUpperCase() + 'S';
+                        const badgeColor = type === 'Mason' ? 'text-blue-600 bg-blue-50 border-blue-100' : type === 'HalfMason' ? 'text-purple-600 bg-purple-50 border-purple-100' : 'text-orange-600 bg-orange-50 border-orange-100';
+
+                        return (
+                          <div key={type} className="mb-2 last:mb-0 pl-1.5 border-l-2 border-gray-200 print:border-gray-400">
+                            <h4 className={`text-[9px] font-black px-1.5 py-0.5 rounded border inline-block mb-1 ${badgeColor} print:border-gray-300 print:bg-transparent`}>{title}</h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
+                              {workersInType.map((w, idx) => (
+                                <div key={idx} className="flex justify-between items-center py-0.5 border-b border-gray-100 border-dashed print:border-gray-300">
+                                  <span className="font-black text-gray-800 text-[11px] uppercase">{w.worker}</span>
+                                  <div className="text-[10px] font-black uppercase">
+                                    {w.regDays === 0 ? (
+                                      <span className="text-gray-500">{w.otHours}h</span>
+                                    ) : (
+                                      <>
+                                        <span className={w.regDays === 0.5 ? "text-yellow-600" : w.regDays === 2.0 ? "text-indigo-600" : "text-emerald-600 print:text-black"}>
+                                          {w.regDays === 0.5 ? 'HD' : w.regDays === 2.0 ? '2P' : 'P'}
+                                        </span>
+                                        {w.otHours > 0 && <span className="text-purple-600 ml-1 print:text-gray-600">+{w.otHours}h OT</span>}
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
