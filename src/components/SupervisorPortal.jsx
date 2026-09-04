@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  LayoutGrid, Search, Save, LogOut, Calendar, Users, MapPin, HardHat, ChevronDown, Clock, Edit2, AlertCircle, RefreshCw, Eye, EyeOff, Plus
+  LayoutGrid, Search, Save, LogOut, Calendar, Users, MapPin, HardHat, ChevronDown, Clock, Edit2, AlertCircle, RefreshCw, Eye, EyeOff, Plus, X
 } from 'lucide-react';
 import { collection, addDoc, getDocs, doc, query, where, runTransaction, updateDoc } from "firebase/firestore";
 import { db } from '../firebase';
@@ -35,8 +35,10 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
   const [myLogs, setMyLogs] = useState([]);
   const [expandedLogId, setExpandedLogId] = useState(null);
 
+  const [toastMessage, setToastMessage] = useState("");
+
   // --- TEST MODE DETECTOR ---
-  const isTestMode = currentUser?.email?.toLowerCase().includes('test');
+  const isTestMode = currentUser?.email?.toLowerCase()?.includes('test') || false;
   const COLL_LOGS = isTestMode ? "test_daily_logs" : "daily_logs";
   const COLL_REQS = isTestMode ? "test_edit_requests" : "edit_requests";
   const COLL_SHEETS = isTestMode ? "test_attendance_sheets" : "attendance_sheets";
@@ -172,10 +174,10 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
 
   const sortWorkers = (workersList) => {
     return [...workersList].sort((a, b) => {
-      const aStat = supAttendance[a.name]?.status;
-      const bStat = supAttendance[b.name]?.status;
-      const aAct = aStat && aStat !== 'absent' ? 1 : 0;
-      const bAct = bStat && bStat !== 'absent' ? 1 : 0;
+      const aRec = supAttendance[a.name];
+      const bRec = supAttendance[b.name];
+      const aAct = aRec && (aRec.status !== 'absent' || parseFloat(aRec.ot) > 0) ? 1 : 0;
+      const bAct = bRec && (bRec.status !== 'absent' || parseFloat(bRec.ot) > 0) ? 1 : 0;
       if (aAct !== bAct) return bAct - aAct;
       return a.name.localeCompare(b.name);
     });
@@ -360,7 +362,9 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
           timestamp: Date.now(), submittedBy: currentUser?.email || "Unknown User"
         });
         createdLogId = newLogRef.id;
-        alert(`Attendance locked into bucket: ${period.displayName}!`);
+        // Trigger the sleek mobile toast instead of the ugly browser alert
+        setToastMessage("✅ Attendance Secured Successfully!");
+        setTimeout(() => setToastMessage(""), 3000);
       }
 
       // --- SEND PROVISIONAL WORKER ADMIN REQUESTS ---
@@ -467,7 +471,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                   <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isA ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
                 </div>
                 <div className="w-14 shrink-0">
-                  <input type="number" placeholder="Hrs" value={rec.ot} max="12" min="0" onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-full h-8 bg-gray-50 border border-gray-200 px-1 rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 text-center" />
+                  <input type="number" placeholder="Hrs" value={rec.ot || ''} max="12" min="0" onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-full h-8 bg-gray-50 border border-gray-200 px-1 rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 text-center" />
                 </div>
               </div>
             </div>
@@ -499,7 +503,14 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
           </button>
         </div>
       </header>
-
+      {/* MOBILE-OPTIMIZED FLOATING TOAST */}
+      {toastMessage && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top-4 fade-in duration-300 w-[90%] max-w-sm">
+          <div className="bg-gray-900/95 backdrop-blur-md text-white px-5 py-3.5 rounded-2xl shadow-2xl font-black text-sm flex items-center justify-center gap-2 text-center border border-gray-700">
+            {toastMessage}
+          </div>
+        </div>
+      )}
       {isTestMode && (
         <div className="bg-yellow-400 text-yellow-900 py-2 px-4 text-center text-[11px] font-black uppercase tracking-widest shadow-md flex items-center justify-center gap-2 sticky top-[60px] z-40">
           <AlertCircle className="w-4 h-4" /> TEST MODE ACTIVE — DATA WILL NOT AFFECT LIVE FINANCIALS
@@ -598,28 +609,29 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                 <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-2 mb-4">
                   <div className="flex items-center justify-between sm:justify-start gap-3">
                     <h3 className="font-black text-gray-900 text-base md:text-lg">Roster <span className="text-gray-400">({activeContractorWorkers.length})</span></h3>
-                    <button onClick={() => setShowAddWorker(!showAddWorker)} className="text-[10px] font-black bg-blue-50 text-blue-600 px-2 py-1 rounded-md uppercase tracking-wider hover:bg-blue-100 transition-colors flex items-center gap-1">
-                      <Plus className="w-3 h-3" /> Add Worker
-                    </button>
                   </div>
                   <div className="relative w-full sm:w-48 md:w-64">
                     <Search className="w-3.5 h-3.5 md:w-4 md:h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input type="text" placeholder="Search name..." value={workerSearch} onChange={(e) => setWorkerSearch(e.target.value)} className="w-full pl-8 md:pl-9 pr-3 md:pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg md:rounded-xl text-xs md:text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:bg-white" />
                   </div>
                 </div>
-
-                {/* ADD PROVISIONAL WORKER UI */}
-                {showAddWorker && (
-                  <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100 flex flex-col sm:flex-row gap-2 mb-4 animate-in fade-in slide-in-from-top-2 shadow-inner">
-                    <input type="text" placeholder="Worker Name..." value={newWorkerName} onChange={(e) => setNewWorkerName(e.target.value)} className="flex-1 px-3 py-2 text-sm font-bold rounded-lg border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
-                    <select value={newWorkerType} onChange={(e) => setNewWorkerType(e.target.value)} className="px-3 py-2 text-sm font-bold rounded-lg border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 bg-white cursor-pointer">
-                      <option value="Helper">Helper</option>
-                      <option value="HalfMason">Half Mason</option>
-                      <option value="Mason">Mason</option>
-                    </select>
-                    <div className="flex gap-2">
-                      <button onClick={() => setShowAddWorker(false)} className="px-3 py-2 text-xs font-black text-gray-500 hover:bg-gray-100 rounded-lg transition-colors flex-1 sm:flex-none">Cancel</button>
-                      <button onClick={handleAddNewWorkerLocal} className="px-4 py-2 text-xs font-black bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 transition-colors flex-1 sm:flex-none">Save</button>
+                {/* 1. THE ACTIVE CART (Selected Workers Box) */}
+                {activeContractorWorkers.filter(w => supAttendance[w.name] && (supAttendance[w.name].status !== 'absent' || parseFloat(supAttendance[w.name].ot) > 0)).length > 0 && (
+                  <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-3 mb-4 max-h-32 overflow-y-auto custom-scrollbar shadow-inner">
+                    <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest mb-2">Marked Today ({activeContractorWorkers.filter(w => supAttendance[w.name] && (supAttendance[w.name].status !== 'absent' || parseFloat(supAttendance[w.name].ot) > 0)).length})</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {activeContractorWorkers.filter(w => supAttendance[w.name] && (supAttendance[w.name].status !== 'absent' || parseFloat(supAttendance[w.name].ot) > 0)).map(w => {
+                        const rec = supAttendance[w.name];
+                        const val = rec.status === 'present' ? 'P' : rec.status === 'half' ? 'HD' : rec.status === '2P' ? '2P' : '';
+                        const otVal = parseFloat(rec.ot) > 0 ? `+${rec.ot}h` : '';
+                        return (
+                          <div key={w.name} className="bg-white border border-emerald-200 text-gray-800 text-[10px] font-black pl-2 pr-1 py-1 rounded-lg shadow-sm flex items-center gap-1.5">
+                            <span className="truncate max-w-[80px] sm:max-w-[100px]">{w.name}</span>
+                            <span className="text-emerald-600">{val}{otVal}</span>
+                            <button onClick={() => { handleAttendanceChange(w.name, 'absent'); handleOTChange(w.name, ''); }} className="text-gray-400 hover:text-red-500 ml-0.5 bg-gray-50 hover:bg-red-50 rounded-md p-0.5"><X className="w-3 h-3" /></button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -630,13 +642,36 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                   {renderCategoryUI(helpers, "HELPERS", "text-orange-500", "bg-orange-500")}
                 </div>
 
-                <div className="mt-8 flex flex-col md:flex-row gap-3">
+                {/* 2. THE MOVED ADD WORKER FORM */}
+                {showAddWorker ? (
+                  <div className="mt-6 bg-blue-50/50 p-4 rounded-[1.5rem] border border-blue-200 shadow-inner flex flex-col sm:flex-row gap-3 animate-in fade-in slide-in-from-bottom-2">
+                    <input type="text" placeholder="Worker Name..." value={newWorkerName} onChange={(e) => setNewWorkerName(e.target.value)} className="flex-1 px-4 py-3 text-sm font-bold rounded-xl border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+                    <select value={newWorkerType} onChange={(e) => setNewWorkerType(e.target.value)} className="px-4 py-3 text-sm font-bold rounded-xl border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 bg-white cursor-pointer">
+                      <option value="Helper">Helper</option>
+                      <option value="HalfMason">Half Mason</option>
+                      <option value="Mason">Mason</option>
+                    </select>
+                    <div className="flex gap-2">
+                      <button onClick={() => setShowAddWorker(false)} className="px-4 py-3 text-xs font-black text-gray-500 hover:bg-white border border-transparent hover:border-gray-200 rounded-xl transition-all flex-1 sm:flex-none">Cancel</button>
+                      <button onClick={handleAddNewWorkerLocal} className="px-6 py-3 text-xs font-black bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md transition-all flex-1 sm:flex-none">Save</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-6 flex justify-center w-full">
+                    <button onClick={() => setShowAddWorker(true)} className="w-full text-xs font-bold text-gray-500 hover:text-blue-600 bg-white active:bg-blue-50 py-3 rounded-2xl border-2 border-gray-200 border-dashed transition-all flex items-center justify-center gap-2">
+                      Worker missing? <span className="text-blue-600">Register New Profile</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* 3. THE STICKY SAVE BAR */}
+                <div className="sticky bottom-14 md:bottom-0 mt-6 pt-4 pb-2 bg-white md:bg-transparent z-40 border-t border-gray-100 md:border-0 flex flex-col md:flex-row gap-3 shadow-[0_-15px_15px_-10px_rgba(0,0,0,0.05)] md:shadow-none -mx-4 px-4 md:mx-0 md:px-0">
                   {editingLog && (
                     <button onClick={cancelEdit} className="w-full md:w-auto font-black py-3.5 px-6 rounded-xl border-2 border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors">
                       Cancel Edit
                     </button>
                   )}
-                  <button onClick={submitDailyLog} disabled={isSubmittingLog || activeContractorWorkers.length === 0} className={`w-full flex-1 font-black py-3.5 rounded-xl flex items-center justify-center gap-2 shadow-md transition-all ${isSubmittingLog || activeContractorWorkers.length === 0 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : editingLog ? 'bg-yellow-500 hover:bg-yellow-600 text-white shadow-yellow-500/30' : 'bg-gray-900 hover:bg-emerald-600 text-white'}`}>
+                  <button onClick={submitDailyLog} disabled={isSubmittingLog || activeContractorWorkers.length === 0} className={`w-full flex-1 font-black py-3.5 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all ${isSubmittingLog || activeContractorWorkers.length === 0 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : editingLog ? 'bg-yellow-500 hover:bg-yellow-600 text-white shadow-yellow-500/30' : 'bg-gray-900 hover:bg-emerald-600 text-white'}`}>
                     {editingLog ? <Edit2 className="w-4 h-4" /> : <Save className="w-4 h-4" />}
                     {isSubmittingLog ? 'Saving...' : editingLog ? "Update Attendance" : "Secure Today's Attendance"}
                   </button>
