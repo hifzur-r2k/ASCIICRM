@@ -135,7 +135,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
       }, {});
       setSupAttendance(defaultState);
     }
-  }, [supContractor, masterWorkers, editingLog]);
+  }, [supContractor, editingLog]);
 
   const handleAttendanceChange = (name, status) => {
     setSupAttendance(prev => ({ ...prev, [name]: { ...prev[name], status: status } }));
@@ -167,18 +167,35 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
     };
 
     setMasterWorkers(prev => [...prev, newW]);
-    setSupAttendance(prev => ({ ...prev, [nameCaps]: { status: 'present', ot: '' } }));
+    
+    // 1. STRICTLY DEFAULT TO ABSENT (Not Present)
+    setSupAttendance(prev => ({ ...prev, [nameCaps]: { status: 'absent', ot: '' } }));
+
     setShowAddWorker(false);
     setNewWorkerName("");
-  };
 
+    // 2. FRONT & CENTER: Auto-search their name so they are the only one on screen
+    setWorkerSearch(nameCaps);
+
+    // 3. EXACT MESSAGE REQUESTED
+    setToastMessage(`✅ New ${newWorkerType} "${nameCaps}" is added!`);
+    setTimeout(() => setToastMessage(""), 3500);
+  };
+  
   const sortWorkers = (workersList) => {
     return [...workersList].sort((a, b) => {
+      // 1. NEW UPGRADE: Always force newly added (provisional) workers to the absolute top of the list
+      if (a.isProvisional && !b.isProvisional) return -1;
+      if (!a.isProvisional && b.isProvisional) return 1;
+
+      // 2. Float present workers
       const aRec = supAttendance[a.name];
       const bRec = supAttendance[b.name];
       const aAct = aRec && (aRec.status !== 'absent' || parseFloat(aRec.ot) > 0) ? 1 : 0;
       const bAct = bRec && (bRec.status !== 'absent' || parseFloat(bRec.ot) > 0) ? 1 : 0;
       if (aAct !== bAct) return bAct - aAct;
+      
+      // 3. Alphabetical order for everyone else
       return a.name.localeCompare(b.name);
     });
   };
@@ -457,21 +474,27 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
         {list.map(worker => {
           const rec = supAttendance[worker.name] || {};
           const is2P = rec.status === '2P'; const isP = rec.status === 'present'; const isHD = rec.status === 'half'; const isA = rec.status === 'absent';
+
+          // UPGRADE 1: Tint the entire card green if the worker is present
+          const cardBg = isA ? 'bg-gray-50/50 border-gray-100' : 'bg-emerald-50/40 border-emerald-300 shadow-sm';
+
           return (
-            <div key={worker.name} className={`px-2 md:px-3 py-2.5 rounded-xl border transition-all flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 md:gap-4 ${isA ? 'bg-gray-50/50 border-gray-100' : 'bg-white border-blue-200 shadow-sm'} ${worker.isProvisional ? 'border-dashed border-orange-300' : ''}`}>
+            <div key={worker.name} className={`px-2 md:px-3 py-2.5 rounded-xl border transition-all flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 md:gap-4 ${cardBg} ${worker.isProvisional ? 'border-dashed border-orange-300' : ''}`}>
               <div>
                 <p className="font-black text-gray-900 text-sm min-w-0 truncate">{worker.name}</p>
                 {worker.isProvisional && <p className="text-[9px] font-bold text-orange-500 uppercase tracking-widest mt-0.5">Pending Admin Approval</p>}
               </div>
               <div className="flex items-center justify-between md:justify-end gap-1.5 shrink-0">
-                <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200/50 flex-1 md:flex-none justify-between">
+                <div className="flex bg-gray-100/80 p-0.5 rounded-lg border border-gray-200/50 flex-1 md:flex-none justify-between shadow-inner">
+                  {/* UPGRADE 2: High Contrast Active States */}
                   <button onClick={() => handleAttendanceChange(worker.name, '2P')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${is2P ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>2P</button>
                   <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isP ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
                   <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isHD ? 'bg-yellow-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
-                  <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isA ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
+                  <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isA ? 'bg-white text-gray-900 border border-gray-300 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
                 </div>
-                <div className="w-14 shrink-0">
-                  <input type="number" placeholder="Hrs" value={rec.ot || ''} max="12" min="0" onChange={(e) => handleOTChange(worker.name, e.target.value)} className="w-full h-8 bg-gray-50 border border-gray-200 px-1 rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-emerald-500/20 text-center" />
+                <div className="w-16 shrink-0 relative">
+                  {/* UPGRADE 3: inputMode="decimal" forces the phone number pad to open instead of the QWERTY keyboard */}
+                  <input type="number" inputMode="decimal" pattern="[0-9]*" placeholder="Hrs" value={rec.ot || ''} max="12" min="0" onChange={(e) => handleOTChange(worker.name, e.target.value)} className={`w-full h-8 px-1 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 text-center transition-all ${rec.ot ? 'bg-emerald-100 text-emerald-900 border border-emerald-400' : 'bg-white border border-gray-200 text-gray-800'}`} />
                 </div>
               </div>
             </div>
@@ -485,7 +508,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
   const displaySelectedSite = selectedSiteFull ? getSiteDisplay(selectedSiteFull) : (supSite || 'Choose Site...');
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-gray-800 font-sans selection:bg-emerald-100 selection:text-emerald-900 pb-20">
+    <div className="min-h-screen bg-[#f8fafc] text-gray-800 font-sans selection:bg-emerald-100 selection:text-emerald-900 pb-36">
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex justify-between items-center shadow-sm sticky top-0 z-50">
         <div className="flex items-center gap-2" title="CRM_FIX">
           <div className="p-1.5 rounded-lg bg-emerald-600"><LayoutGrid className="w-4 h-4 text-white" /></div>
@@ -664,17 +687,19 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                   </div>
                 )}
 
-                {/* 3. THE STICKY SAVE BAR */}
-                <div className="sticky bottom-14 md:bottom-0 mt-6 pt-4 pb-2 bg-white md:bg-transparent z-40 border-t border-gray-100 md:border-0 flex flex-col md:flex-row gap-3 shadow-[0_-15px_15px_-10px_rgba(0,0,0,0.05)] md:shadow-none -mx-4 px-4 md:mx-0 md:px-0">
-                  {editingLog && (
-                    <button onClick={cancelEdit} className="w-full md:w-auto font-black py-3.5 px-6 rounded-xl border-2 border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors">
-                      Cancel Edit
+                {/* 3. THE BULLETPROOF FLOATING SAVE BAR */}
+                <div className="fixed bottom-[60px] md:bottom-0 left-0 w-full p-4 z-40 bg-gradient-to-t from-white via-white to-transparent pointer-events-none flex justify-center pb-6">
+                  <div className="w-full max-w-3xl pointer-events-auto flex flex-col md:flex-row gap-3 px-2">
+                    {editingLog && (
+                      <button onClick={cancelEdit} className="w-full md:w-auto font-black py-3.5 px-6 rounded-xl border-2 border-gray-200 bg-white text-gray-500 hover:bg-gray-50 transition-colors shadow-sm">
+                        Cancel Edit
+                      </button>
+                    )}
+                    <button onClick={submitDailyLog} disabled={isSubmittingLog || activeContractorWorkers.length === 0} className={`w-full flex-1 font-black py-3.5 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all ${isSubmittingLog || activeContractorWorkers.length === 0 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : editingLog ? 'bg-yellow-500 hover:bg-yellow-600 text-white shadow-yellow-500/30' : 'bg-gray-900 hover:bg-emerald-600 text-white shadow-gray-900/20'}`}>
+                      {editingLog ? <Edit2 className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                      {isSubmittingLog ? 'Saving...' : editingLog ? "Update Attendance" : "Secure Today's Attendance"}
                     </button>
-                  )}
-                  <button onClick={submitDailyLog} disabled={isSubmittingLog || activeContractorWorkers.length === 0} className={`w-full flex-1 font-black py-3.5 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all ${isSubmittingLog || activeContractorWorkers.length === 0 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : editingLog ? 'bg-yellow-500 hover:bg-yellow-600 text-white shadow-yellow-500/30' : 'bg-gray-900 hover:bg-emerald-600 text-white'}`}>
-                    {editingLog ? <Edit2 className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-                    {isSubmittingLog ? 'Saving...' : editingLog ? "Update Attendance" : "Secure Today's Attendance"}
-                  </button>
+                  </div>
                 </div>
               </div>
             )}
