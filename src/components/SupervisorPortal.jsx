@@ -62,6 +62,13 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
   const [showAddWorker, setShowAddWorker] = useState(false);
   const [newWorkerName, setNewWorkerName] = useState("");
   const [newWorkerType, setNewWorkerType] = useState("Helper");
+  // COLLAPSIBLE CATEGORY STATE
+  const [collapsedCats, setCollapsedCats] = useState({});
+
+  const toggleCategory = (title) => {
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate(30); // Lighter tap for opening/closing
+    setCollapsedCats(prev => ({ ...prev, [title]: !prev[title] }));
+  };
 
   const defaultContractors = ["Arvind", "Laljeet", "Deepak"];
   const dynamicContractors = Array.from(new Set([...defaultContractors, ...masterWorkers.map(w => w.contractor)])).filter(Boolean);
@@ -138,6 +145,8 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
   }, [supContractor, editingLog]);
 
   const handleAttendanceChange = (name, status) => {
+    // TRIGGER HAPTIC TAP (40ms vibration) if supported by the mobile device
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate(40);
     setSupAttendance(prev => ({ ...prev, [name]: { ...prev[name], status: status } }));
   };
 
@@ -167,7 +176,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
     };
 
     setMasterWorkers(prev => [...prev, newW]);
-    
+
     // 1. STRICTLY DEFAULT TO ABSENT (Not Present)
     setSupAttendance(prev => ({ ...prev, [nameCaps]: { status: 'absent', ot: '' } }));
 
@@ -181,7 +190,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
     setToastMessage(`✅ New ${newWorkerType} "${nameCaps}" is added!`);
     setTimeout(() => setToastMessage(""), 3500);
   };
-  
+
   const sortWorkers = (workersList) => {
     return [...workersList].sort((a, b) => {
       // 1. NEW UPGRADE: Always force newly added (provisional) workers to the absolute top of the list
@@ -194,7 +203,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
       const aAct = aRec && (aRec.status !== 'absent' || parseFloat(aRec.ot) > 0) ? 1 : 0;
       const bAct = bRec && (bRec.status !== 'absent' || parseFloat(bRec.ot) > 0) ? 1 : 0;
       if (aAct !== bAct) return bAct - aAct;
-      
+
       // 3. Alphabetical order for everyone else
       return a.name.localeCompare(b.name);
     });
@@ -468,38 +477,57 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
 
   const renderCategoryUI = (list, title, colorClass, dotColor) => {
     if (list.length === 0) return null;
+    
+    // Check if this specific category is collapsed
+    const isCollapsed = collapsedCats[title];
+
     return (
       <div className="space-y-2">
-        <h4 className={`text-[10px] font-black ${colorClass} uppercase tracking-widest border-b border-gray-100 pb-1.5 flex items-center gap-1.5`}><div className={`w-1.5 h-1.5 rounded-full ${dotColor}`}></div> {title}</h4>
-        {list.map(worker => {
-          const rec = supAttendance[worker.name] || {};
-          const is2P = rec.status === '2P'; const isP = rec.status === 'present'; const isHD = rec.status === 'half'; const isA = rec.status === 'absent';
+        {/* THE COLLAPSIBLE HEADER */}
+        <div 
+          onClick={() => toggleCategory(title)}
+          className="flex items-center justify-between cursor-pointer border-b border-gray-100 pb-1.5 transition-all active:opacity-50 select-none px-1"
+        >
+          <h4 className={`text-[10px] font-black ${colorClass} uppercase tracking-widest flex items-center gap-1.5`}>
+            <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`}></div> 
+            {title} <span className="text-gray-400 ml-1">({list.length})</span>
+          </h4>
+          <div className="p-1 rounded-md bg-gray-50 hover:bg-gray-100 transition-colors">
+            <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-300 ${isCollapsed ? '' : 'rotate-180'}`} />
+          </div>
+        </div>
 
-          // UPGRADE 1: Tint the entire card green if the worker is present
-          const cardBg = isA ? 'bg-gray-50/50 border-gray-100' : 'bg-emerald-50/40 border-emerald-300 shadow-sm';
+        {/* THE CONDITIONAL ROSTER LIST */}
+        {!isCollapsed && (
+          <div className="space-y-2 pt-1 animate-in slide-in-from-top-2 fade-in duration-200">
+            {list.map(worker => {
+              const rec = supAttendance[worker.name] || {};
+              const is2P = rec.status === '2P'; const isP = rec.status === 'present'; const isHD = rec.status === 'half'; const isA = rec.status === 'absent';
 
-          return (
-            <div key={worker.name} className={`px-2 md:px-3 py-2.5 rounded-xl border transition-all flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 md:gap-4 ${cardBg} ${worker.isProvisional ? 'border-dashed border-orange-300' : ''}`}>
-              <div>
-                <p className="font-black text-gray-900 text-sm min-w-0 truncate">{worker.name}</p>
-                {worker.isProvisional && <p className="text-[9px] font-bold text-orange-500 uppercase tracking-widest mt-0.5">Pending Admin Approval</p>}
-              </div>
-              <div className="flex items-center justify-between md:justify-end gap-1.5 shrink-0">
-                <div className="flex bg-gray-100/80 p-0.5 rounded-lg border border-gray-200/50 flex-1 md:flex-none justify-between shadow-inner">
-                  {/* UPGRADE 2: High Contrast Active States */}
-                  <button onClick={() => handleAttendanceChange(worker.name, '2P')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${is2P ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>2P</button>
-                  <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isP ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
-                  <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isHD ? 'bg-yellow-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
-                  <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isA ? 'bg-white text-gray-900 border border-gray-300 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
+              const cardBg = isA ? 'bg-gray-50/50 border-gray-100' : 'bg-emerald-50/40 border-emerald-300 shadow-sm';
+
+              return (
+                <div key={worker.name} className={`px-2 md:px-3 py-2.5 rounded-xl border transition-all flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 md:gap-4 ${cardBg} ${worker.isProvisional ? 'border-dashed border-orange-300' : ''}`}>
+                  <div>
+                    <p className="font-black text-gray-900 text-sm min-w-0 truncate">{worker.name}</p>
+                    {worker.isProvisional && <p className="text-[9px] font-bold text-orange-500 uppercase tracking-widest mt-0.5">Pending Admin Approval</p>}
+                  </div>
+                  <div className="flex items-center justify-between md:justify-end gap-1.5 shrink-0">
+                    <div className="flex bg-gray-100/80 p-0.5 rounded-lg border border-gray-200/50 flex-1 md:flex-none justify-between shadow-inner">
+                      <button onClick={() => handleAttendanceChange(worker.name, '2P')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${is2P ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>2P</button>
+                      <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isP ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
+                      <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isHD ? 'bg-yellow-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
+                      <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isA ? 'bg-white text-gray-900 border border-gray-300 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
+                    </div>
+                    <div className="w-16 shrink-0 relative">
+                      <input type="number" inputMode="decimal" pattern="[0-9]*" placeholder="Hrs" value={rec.ot || ''} max="12" min="0" onChange={(e) => handleOTChange(worker.name, e.target.value)} className={`w-full h-8 px-1 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 text-center transition-all ${rec.ot ? 'bg-emerald-100 text-emerald-900 border border-emerald-400' : 'bg-white border border-gray-200 text-gray-800'}`} />
+                    </div>
+                  </div>
                 </div>
-                <div className="w-16 shrink-0 relative">
-                  {/* UPGRADE 3: inputMode="decimal" forces the phone number pad to open instead of the QWERTY keyboard */}
-                  <input type="number" inputMode="decimal" pattern="[0-9]*" placeholder="Hrs" value={rec.ot || ''} max="12" min="0" onChange={(e) => handleOTChange(worker.name, e.target.value)} className={`w-full h-8 px-1 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 text-center transition-all ${rec.ot ? 'bg-emerald-100 text-emerald-900 border border-emerald-400' : 'bg-white border border-gray-200 text-gray-800'}`} />
-                </div>
-              </div>
-            </div>
-          );
-        })}
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   };
