@@ -98,6 +98,119 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportContractor, setReportContractor] = useState("");
 
+  // --- CEO VIEW STATES & FETCHER ---
+  const [ceoData, setCeoData] = useState([]);
+  const [isFetchingCeo, setIsFetchingCeo] = useState(false);
+  const [downloadedLogsCache, setDownloadedLogsCache] = useState({});
+
+  useEffect(() => {
+    const fetchCeoData = async () => {
+      if (activeTab !== 'ceo' || !loadedSheetId || !selectedRecordContractor) return;
+
+      const cacheKey = `${loadedSheetId}_${selectedRecordContractor}`;
+      let logsInRange = [];
+      setIsFetchingCeo(true);
+
+      try {
+        const [year, month, half] = loadedSheetId.split('-');
+        const startDay = half === 'H1' ? 1 : 16;
+        const endDay = half === 'H1' ? 15 : new Date(year, month, 0).getDate();
+        const startDateStr = `${year}-${month}-${String(startDay).padStart(2, '0')}`;
+        const endDateStr = `${year}-${month}-${String(endDay).padStart(2, '0')}`;
+
+        if (downloadedLogsCache[cacheKey]) {
+          logsInRange = downloadedLogsCache[cacheKey];
+        } else {
+          const qLogs = query(collection(db, COLL_LOGS), where("contractor", "==", selectedRecordContractor));
+          const logSnap = await getDocs(qLogs);
+          logSnap.forEach(d => {
+            const data = d.data();
+            if (data.date >= startDateStr && data.date <= endDateStr) logsInRange.push(data);
+          });
+          setDownloadedLogsCache(prev => ({ ...prev, [cacheKey]: logsInRange }));
+        }
+
+        const ceoRows = [];
+        const contractorWorkers = workerData.filter(w => w.contractor === selectedRecordContractor);
+
+        contractorWorkers.forEach(w => {
+          let masterW = masterWorkers.find(mw => mw.name === w.worker && mw.contractor === selectedRecordContractor);
+          let dailyWage = masterW ? masterW.wage : (w.regDays > 0 ? (w.totalBaseCost / w.regDays) : 0);
+          let otRate = masterW ? masterW.otRate : (w.otHours > 0 ? (w.totalOTCost / w.otHours) : (dailyWage / 8));
+
+          // EXACT DECIMAL FORMATTING
+          dailyWage = parseFloat(dailyWage.toFixed(2));
+          otRate = parseFloat(otRate.toFixed(2));
+
+          let daysMap = {};
+          let exactPeriodDays = 0;
+          let exactPeriodOT = 0;
+
+          for (let d = startDay; d <= endDay; d++) {
+            const targetDate = `${year}-${month}-${String(d).padStart(2, '0')}`;
+            let workerRecord = null;
+            let siteCode = "NA";
+
+            for (const log of logsInRange) {
+              if (log.date === targetDate) {
+                const match = log.workers.find(lw => lw.worker === w.worker);
+                if (match && (match.regDays > 0 || match.otHours > 0)) {
+                  workerRecord = match;
+                  siteCode = getSiteCode(log.site);
+                  break;
+                }
+              }
+            }
+
+            if (workerRecord) {
+              let cellStr = workerRecord.regDays === 1 ? `1 ${siteCode}` :
+                workerRecord.regDays === 0.5 ? `0.5 ${siteCode}` :
+                  workerRecord.regDays === 2 ? `2P ${siteCode}` : `0 ${siteCode}`;
+              if (workerRecord.otHours > 0) cellStr += ` (+${workerRecord.otHours}h)`;
+              daysMap[d] = cellStr;
+
+              // MATH FIX: Only add to totals if they worked in THIS 15-day bucket
+              exactPeriodDays += workerRecord.regDays;
+              exactPeriodOT += workerRecord.otHours;
+            } else {
+              daysMap[d] = "0 NA";
+            }
+          }
+
+          // Only add worker if they actually have days/OT in this 15 day bucket
+          if (exactPeriodDays > 0 || exactPeriodOT > 0) {
+            ceoRows.push({
+              worker: w.worker, type: w.type, daysMap,
+              regDays: exactPeriodDays, otHours: exactPeriodOT,
+              wage: dailyWage, otRate: otRate,
+              baseCost: parseFloat((exactPeriodDays * dailyWage).toFixed(2)),
+              otCost: parseFloat((exactPeriodOT * otRate).toFixed(2))
+            });
+          }
+        });
+
+        setCeoData(ceoRows.sort((a, b) => {
+          const types = { 'Mason': 1, 'HalfMason': 2, 'Helper': 3 };
+          if (types[a.type] !== types[b.type]) return types[a.type] - types[b.type];
+          return a.worker.localeCompare(b.worker);
+        }));
+      } catch (e) { console.error(e); }
+      setIsFetchingCeo(false);
+    };
+    fetchCeoData();
+  }, [activeTab, loadedSheetId, selectedRecordContractor, workerData]);
+
+  const getDaysArray = () => {
+    if (!loadedSheetId) return [];
+    const [year, month, half] = loadedSheetId.split('-');
+    const start = half === 'H1' ? 1 : 16;
+    const end = half === 'H1' ? 15 : new Date(year, month, 0).getDate();
+    const arr = [];
+    for (let i = start; i <= end; i++) arr.push(i);
+    return arr;
+  };
+  const daysArray = getDaysArray();
+
   // --- SMART SITE DECODER ---
   const getFullSiteName = (codeToFind) => {
     if (!codeToFind) return "Unknown Site";
@@ -115,6 +228,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
   const fetchData = async () => {
     setIsLoadingRecords(true);
+    setDownloadedLogsCache({})
     try {
       // 1. Fetch from either LIVE or TEST sheets bucket based on switch
       const sheetsSnap = await getDocs(collection(db, COLL_SHEETS));
@@ -700,9 +814,8 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     base: acc.base + (row.totalBaseCost || 0),
     otPay: acc.otPay + (row.totalOTCost || 0)
   }), { days: 0, ot: 0, base: 0, otPay: 0 });
-
   const exportToExcel = () => {
-    if (filteredData.length === 0) return alert("No data to export.");
+    if (activeTab !== 'ceo' && filteredData.length === 0) return alert("No data to export.");
     let aoa = [
       ["CRM_FIX - FINANCIAL & ATTENDANCE REPORT"],
       [`Period: ${sheetName}`],
@@ -711,13 +824,61 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       []
     ];
 
-    if (activeTab === 'worker') {
+    if (activeTab === 'ceo') {
+      if (ceoData.length === 0) return alert("No CEO data loaded.");
+
+      let headers = ["SN.", "Worker Name"];
+      daysArray.forEach(d => headers.push(d.toString()));
+      headers.push("Total Days", "Total OT", "Daily Wage", "OT Wage", "Total Wage Amount", "Total OT Amount", "Total Payout");
+      aoa.push(headers);
+
+      let globalSn = 1;
+
+      const processExportCategory = (typeCode, typeLabel) => {
+        const data = ceoData.filter(r => r.type === typeCode);
+        if (data.length === 0) return;
+
+        // BANNER ROW
+        let titleRow = [typeLabel.toUpperCase()];
+        aoa.push(titleRow);
+
+        let subDays = 0, subOt = 0, subBase = 0, subOtCost = 0;
+
+        data.forEach(row => {
+          subDays += row.regDays; subOt += row.otHours; subBase += row.baseCost; subOtCost += row.otCost;
+          let r = [globalSn++, row.worker];
+          daysArray.forEach(d => r.push(row.daysMap[d]));
+          r.push(row.regDays, row.otHours, row.wage, row.otRate, row.baseCost, row.otCost, row.baseCost + row.otCost);
+          aoa.push(r);
+        });
+
+        // SUBTOTAL ROW
+        let subR = [`${typeLabel.toUpperCase()} TOTAL`, ""];
+        daysArray.forEach(d => subR.push(""));
+        subR.push(subDays, subOt, "", "", Number(subBase.toFixed(2)), Number(subOtCost.toFixed(2)), Number((subBase + subOtCost).toFixed(2)));
+        aoa.push(subR);
+        aoa.push([]); // Blank separator
+      };
+
+      processExportCategory('Mason', 'Masons');
+      processExportCategory('HalfMason', 'Half Masons');
+      processExportCategory('Helper', 'Helpers');
+
+      // GRAND TOTAL ROW
+      const ft = ["GRAND TOTAL", ""];
+      daysArray.forEach(d => ft.push(""));
+      let grandDays = ceoData.reduce((acc, r) => acc + r.regDays, 0);
+      let grandOt = ceoData.reduce((acc, r) => acc + r.otHours, 0);
+      let grandBase = ceoData.reduce((acc, r) => acc + r.baseCost, 0);
+      let grandOtCost = ceoData.reduce((acc, r) => acc + r.otCost, 0);
+      ft.push(grandDays, grandOt, "", "", Number(grandBase.toFixed(2)), Number(grandOtCost.toFixed(2)), Number((grandBase + grandOtCost).toFixed(2)));
+      aoa.push(ft);
+    }
+    else if (activeTab === 'worker') {
       aoa.push(["Worker Name", "Category", "Total Days", "Total OT (Hrs)", "Base Pay (Rs)", "OT Pay (Rs)", "Total Payout (Rs)"]);
       const addCategoryToAOA = (data, catName) => {
         if (data.length === 0) return;
-        data.forEach(row => {
-          aoa.push([row.worker, row.type, row.regDays, row.otHours, row.totalBaseCost, row.totalOTCost, row.totalBaseCost + row.totalOTCost]);
-        });
+        data.forEach(row => { aoa.push([row.worker, row.type, row.regDays, row.otHours, row.totalBaseCost, row.totalOTCost, row.totalBaseCost + row.totalOTCost]); });
         const sub = calcSubtotals(data);
         aoa.push([`${catName.toUpperCase()} SUBTOTAL`, "", sub.days, sub.ot, sub.base, sub.otPay, sub.base + sub.otPay]);
         aoa.push([]);
@@ -727,9 +888,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       addCategoryToAOA(helpersData, "Helper");
       aoa.push(["GRAND TOTAL", "", totals.masonReg + totals.halfMasonReg + totals.helperReg, totals.masonOT + totals.halfMasonOT + totals.helperOT, totals.totalBaseCost, totals.totalOTCost, totals.totalBaseCost + totals.totalOTCost]);
     } else {
-      const headers = activeTab === 'day'
-        ? ["Day", "Site Code", "Mason Days", "Mason OT", "HM Days", "HM OT", "Helper Days", "Helper OT", "Base Cost (Rs)", "OT Cost (Rs)", "Total Site Cost (Rs)"]
-        : ["Site Code", "Mason Days", "Mason OT", "HM Days", "HM OT", "Helper Days", "Helper OT", "Base Cost (Rs)", "OT Cost (Rs)", "Total Site Cost (Rs)"];
+      const headers = activeTab === 'day' ? ["Day", "Site Code", "Mason Days", "Mason OT", "HM Days", "HM OT", "Helper Days", "Helper OT", "Base Cost (Rs)", "OT Cost (Rs)", "Total Site Cost (Rs)"] : ["Site Code", "Mason Days", "Mason OT", "HM Days", "HM OT", "Helper Days", "Helper OT", "Base Cost (Rs)", "OT Cost (Rs)", "Total Site Cost (Rs)"];
       aoa.push(headers);
       filteredData.forEach(row => {
         const r = activeTab === 'day' ? [row.day] : [];
@@ -742,53 +901,164 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       aoa.push(ft);
     }
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 25 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 20 }, { wch: 12 }, { wch: 15 }, { wch: 15 }, { wch: 20 }];
-    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }, { s: { r: 2, c: 0 }, e: { r: 2, c: 6 } }, { s: { r: 3, c: 0 }, e: { r: 3, c: 6 } }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Report");
     XLSX.writeFile(wb, `CRM_FIX_${selectedRecordContractor}_${activeTab}_${sheetName}.xlsx`);
   };
 
   const exportToPDF = () => {
-    if (filteredData.length === 0) return alert("No data to export.");
+    if (activeTab !== 'ceo' && filteredData.length === 0) return alert("No data to export.");
     try {
-      const doc = new jsPDF('l');
-      doc.setFontSize(18); doc.setTextColor(15, 23, 42); doc.text("CRM_FIX Financial Report", 14, 22);
-      doc.setFontSize(10); doc.setTextColor(100, 116, 139); doc.text(`Period: ${sheetName}   |   Contractor: ${selectedRecordContractor}   |   View: ${activeTab.toUpperCase()}-WISE`, 14, 30);
-      let head = []; let body = []; let foot = [];
-      const formatNum = (num) => Number(num).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+      // Use massive A3 Landscape for CEO, standard A4 Landscape for others
+      const doc = activeTab === 'ceo' ? new jsPDF('l', 'mm', 'a3') : new jsPDF('l', 'mm', 'a4');
 
-      if (activeTab === 'worker') {
+      // Sleek Corporate Header
+      doc.setFontSize(22); doc.setTextColor(15, 23, 42);
+      doc.text("Financial & Attendance Report", 14, 20);
+      doc.setFontSize(10); doc.setTextColor(100, 116, 139);
+      doc.text(`CONTRACTOR: ${selectedRecordContractor.toUpperCase()}   |   PERIOD: ${sheetName.toUpperCase()}   |   VIEW: ${activeTab.toUpperCase()}-WISE`, 14, 28);
+
+      let head = []; let body = []; let foot = [];
+      let dynamicColStyles = {};
+      const formatNum = (num) => Number(num).toLocaleString('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+
+      if (activeTab === 'ceo') {
+        if (ceoData.length === 0) return alert("No CEO data loaded.");
+        let headers = ["SN.", "Worker Name"];
+        daysArray.forEach(d => headers.push(d.toString()));
+        headers.push("Days", "OT", "Wage", "OT Rate", "Wage Amt", "OT Amt", "Payout");
+        head = [headers];
+
+        // Zero Negative Space: Strict Column Alignment & Widths
+        let cIdx = 0;
+        dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 10 }; // SN
+        dynamicColStyles[cIdx++] = { halign: 'left', cellWidth: 40 };   // Name
+        daysArray.forEach(() => { dynamicColStyles[cIdx++] = { halign: 'center' }; }); // Days (Auto tight fit)
+        dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 14, fillColor: [248, 250, 252] }; // Days
+        dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 14, fillColor: [248, 250, 252] }; // OT
+        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 18 };  // Wage
+        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 18 };  // OT Rate
+        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 24, fillColor: [248, 250, 252] }; // Wage Amt
+        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 22, fillColor: [248, 250, 252] }; // OT Amt
+        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 26, fontStyle: 'bold', textColor: [15, 23, 42], fillColor: [241, 245, 249] }; // Payout
+
+        let globalSn = 1;
+
+        const processCatToPDF = (typeCode, typeLabel) => {
+          const data = ceoData.filter(r => r.type === typeCode);
+          if (data.length === 0) return;
+
+          // Clean Category Banner
+          body.push([{ content: typeLabel.toUpperCase(), colSpan: headers.length, styles: { fillColor: [226, 232, 240], fontStyle: 'bold', textColor: [15, 23, 42], halign: 'left' } }]);
+
+          let subDays = 0, subOt = 0, subBase = 0, subOtCost = 0;
+          data.forEach(row => {
+            subDays += (row.regDays || 0); subOt += (row.otHours || 0); subBase += (row.baseCost || 0); subOtCost += (row.otCost || 0);
+
+            let r = [String(globalSn++), row.worker || "Unknown"];
+            daysArray.forEach(d => r.push(row.daysMap[d] || "0 NA"));
+            r.push(
+              String(row.regDays || 0), String(row.otHours || 0),
+              formatNum(row.wage || 0), formatNum(row.otRate || 0),
+              formatNum(row.baseCost || 0), formatNum(row.otCost || 0), formatNum((row.baseCost || 0) + (row.otCost || 0))
+            );
+            body.push(r);
+          });
+
+          // Subtotal Row with Custom Colors
+          let subR = [{ content: `${typeLabel.toUpperCase()} SUBTOTAL`, colSpan: 2, styles: { halign: 'right', fontStyle: 'bold', fillColor: [241, 245, 249] } }];
+          daysArray.forEach(d => subR.push({ content: "", styles: { fillColor: [241, 245, 249] } }));
+          subR.push(
+            { content: String(subDays), styles: { fontStyle: 'bold', halign: 'center', fillColor: [241, 245, 249] } },
+            { content: String(subOt), styles: { fontStyle: 'bold', halign: 'center', fillColor: [241, 245, 249] } },
+            { content: "", styles: { fillColor: [241, 245, 249] } },
+            { content: "", styles: { fillColor: [241, 245, 249] } },
+            { content: formatNum(subBase), styles: { fontStyle: 'bold', halign: 'right', fillColor: [241, 245, 249] } },
+            { content: formatNum(subOtCost), styles: { fontStyle: 'bold', halign: 'right', fillColor: [241, 245, 249] } },
+            { content: formatNum(subBase + subOtCost), styles: { fontStyle: 'bold', halign: 'right', fillColor: [241, 245, 249], textColor: [16, 185, 129] } } // Emerald Text
+          );
+          body.push(subR);
+
+          // Visual Spacer
+          body.push([{ content: "", colSpan: headers.length, styles: { fillColor: [255, 255, 255], cellPadding: 2, lineWidth: 0 } }]);
+        };
+
+        processCatToPDF('Mason', 'Masons');
+        processCatToPDF('HalfMason', 'Half Masons');
+        processCatToPDF('Helper', 'Helpers');
+
+        let grandDays = ceoData.reduce((acc, r) => acc + (r.regDays || 0), 0);
+        let grandOt = ceoData.reduce((acc, r) => acc + (r.otHours || 0), 0);
+        let grandBase = ceoData.reduce((acc, r) => acc + (r.baseCost || 0), 0);
+        let grandOtCost = ceoData.reduce((acc, r) => acc + (r.otCost || 0), 0);
+
+        // Massive Dark Footer
+        let ft = [{ content: "GRAND TOTAL", colSpan: 2, styles: { halign: 'right' } }];
+        daysArray.forEach(d => ft.push(""));
+        ft.push(
+          String(grandDays), String(grandOt), "", "",
+          formatNum(grandBase), formatNum(grandOtCost),
+          { content: formatNum(grandBase + grandOtCost), styles: { textColor: [52, 211, 153] } } // Pop Green
+        );
+        foot = [ft];
+      }
+      else if (activeTab === 'worker') {
         head = [["Worker Name", "Category", "Total Days", "OT (Hrs)", "Base Pay (Rs)", "OT Pay (Rs)", "Total Payout (Rs)"]];
         const addCategoryToPDF = (data, catName) => {
           if (data.length === 0) return;
           data.forEach(row => { body.push([row.worker, row.type, row.regDays, row.otHours, formatNum(row.totalBaseCost), formatNum(row.totalOTCost), formatNum(row.totalBaseCost + row.totalOTCost)]); });
           const sub = calcSubtotals(data);
-          body.push([
-            { content: `${catName.toUpperCase()} SUBTOTAL`, colSpan: 2, styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } },
-            { content: sub.days.toString(), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } },
-            { content: sub.ot.toString(), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } },
-            { content: formatNum(sub.base), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } },
-            { content: formatNum(sub.otPay), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } },
-            { content: formatNum(sub.base + sub.otPay), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }
-          ]);
+          body.push([{ content: `${catName.toUpperCase()} SUBTOTAL`, colSpan: 2, styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }, { content: String(sub.days), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }, { content: String(sub.ot), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }, { content: formatNum(sub.base), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }, { content: formatNum(sub.otPay), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }, { content: formatNum(sub.base + sub.otPay), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }]);
         };
         addCategoryToPDF(masonsData, "Mason"); addCategoryToPDF(halfMasonsData, "Half Mason"); addCategoryToPDF(helpersData, "Helper");
-        foot = [["GRAND TOTAL", "", (totals.masonReg + totals.halfMasonReg + totals.helperReg).toString(), (totals.masonOT + totals.halfMasonOT + totals.helperOT).toString(), formatNum(totals.totalBaseCost), formatNum(totals.totalOTCost), formatNum(totals.totalBaseCost + totals.totalOTCost)]];
+        foot = [["GRAND TOTAL", "", String(totals.masonReg + totals.halfMasonReg + totals.helperReg), String(totals.masonOT + totals.halfMasonOT + totals.helperOT), formatNum(totals.totalBaseCost), formatNum(totals.totalOTCost), formatNum(totals.totalBaseCost + totals.totalOTCost)]];
       } else {
         head = activeTab === 'day' ? [["Day", "Site", "Mason", "M. OT", "HM", "HM OT", "Helper", "H. OT", "Base Cost", "OT Cost", "Total Cost"]] : [["Site", "Mason", "M. OT", "HM", "HM OT", "Helper", "H. OT", "Base Cost", "OT Cost", "Total Cost"]];
         body = filteredData.map(row => {
-          const r = activeTab === 'day' ? [row.day] : [];
-          r.push(row.site, row.masonReg, row.masonOT, row.halfMasonReg, row.halfMasonOT, row.helperReg, row.helperOT, formatNum(row.totalBaseCost || 0), formatNum(row.totalOTCost || 0), formatNum((row.totalBaseCost || 0) + (row.totalOTCost || 0)));
+          const r = activeTab === 'day' ? [String(row.day)] : [];
+          r.push(row.site, String(row.masonReg), String(row.masonOT), String(row.halfMasonReg), String(row.halfMasonOT), String(row.helperReg), String(row.helperOT), formatNum(row.totalBaseCost || 0), formatNum(row.totalOTCost || 0), formatNum((row.totalBaseCost || 0) + (row.totalOTCost || 0)));
           return r;
         });
         const ft = activeTab === 'day' ? ["GRAND TOTAL", ""] : ["GRAND TOTAL"];
-        ft.push(totals.masonReg, totals.masonOT, totals.halfMasonReg, totals.halfMasonOT, totals.helperReg, totals.helperOT, formatNum(totals.totalBaseCost), formatNum(totals.totalOTCost), formatNum(totals.totalBaseCost + totals.totalOTCost));
+        ft.push(String(totals.masonReg), String(totals.masonOT), String(totals.halfMasonReg), String(totals.halfMasonOT), String(totals.helperReg), String(totals.helperOT), formatNum(totals.totalBaseCost), formatNum(totals.totalOTCost), formatNum(totals.totalBaseCost + totals.totalOTCost));
         foot = [ft];
       }
-      autoTable(doc, { startY: 35, head: head, body: body, foot: foot, showFoot: 'lastPage', theme: 'striped', headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' }, footStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' }, styles: { fontSize: 8, cellPadding: 3 }, });
+
+      // THE CORE PDF STYLING ENGINE
+      autoTable(doc, {
+        startY: 38,
+        head: head,
+        body: body,
+        foot: foot,
+        theme: 'grid', // Cleaner spreadsheet look
+        margin: { left: 10, right: 10, top: 38, bottom: 15 },
+        headStyles: {
+          fillColor: [15, 23, 42], // Deep Navy
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          halign: 'center',
+          valign: 'middle'
+        },
+        footStyles: {
+          fillColor: [15, 23, 42],
+          textColor: [255, 255, 255],
+          fontStyle: 'bold'
+        },
+        styles: {
+          fontSize: activeTab === 'ceo' ? 7.5 : 9, // Tighter font for A3
+          cellPadding: 1.5, // Less empty space
+          lineColor: [203, 213, 225], // Subtle slate borders
+          lineWidth: 0.1,
+          valign: 'middle'
+        },
+        columnStyles: dynamicColStyles
+      });
+
       doc.save(`CRM_FIX_${selectedRecordContractor}_${activeTab}_${sheetName}.pdf`);
-    } catch (error) { alert("Error generating PDF."); }
+    } catch (error) {
+      console.error(error);
+      alert("Error generating PDF.");
+    }
   };
 
   const handleCreateSupervisor = async (e) => {
@@ -1485,26 +1755,43 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                     <button onClick={() => setSelectedRecordContractor(null)} className="p-2.5 bg-white border border-gray-200 rounded-xl text-gray-500 hover:text-blue-600 hover:border-blue-200 shadow-sm transition-all" title="Back to Teams">
                       <LayoutGrid className="w-4 h-4" />
                     </button>
-                    <div className="flex w-full lg:w-auto bg-gray-200/60 p-1 rounded-[1.25rem]">
-                      <button className={`flex-1 px-4 md:px-6 py-2 md:py-2.5 font-bold text-xs md:text-sm rounded-xl transition-all ${activeTab === 'day' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('day')}>Day-Wise</button>
-                      <button className={`flex-1 px-4 md:px-6 py-2 md:py-2.5 font-bold text-xs md:text-sm rounded-xl transition-all ${activeTab === 'site' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('site')}>Site-Wise</button>
-                      <button className={`flex-1 px-4 md:px-6 py-2 md:py-2.5 font-bold text-xs md:text-sm rounded-xl transition-all ${activeTab === 'worker' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('worker')}>Worker-Wise</button>
+                    <div className="flex w-full lg:w-auto bg-gray-200/60 p-1 rounded-[1.25rem] overflow-x-auto custom-scrollbar">
+                      <button className={`flex-1 px-4 md:px-6 py-2 md:py-2.5 font-bold text-xs md:text-sm rounded-xl transition-all whitespace-nowrap ${activeTab === 'day' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('day')}>Day-Wise</button>
+                      <button className={`flex-1 px-4 md:px-6 py-2 md:py-2.5 font-bold text-xs md:text-sm rounded-xl transition-all whitespace-nowrap ${activeTab === 'site' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('site')}>Site-Wise</button>
+                      <button className={`flex-1 px-4 md:px-6 py-2 md:py-2.5 font-bold text-xs md:text-sm rounded-xl transition-all whitespace-nowrap ${activeTab === 'worker' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('worker')}>Worker-Wise</button>
+                      <button className={`flex-1 px-4 md:px-6 py-2 md:py-2.5 font-black text-xs md:text-sm rounded-xl transition-all whitespace-nowrap ${activeTab === 'ceo' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`} onClick={() => setActiveTab('ceo')}>CEO-Wise</button>
                     </div>
                   </div>
                   <div className="relative w-full lg:flex-1 lg:max-w-xs">
                     <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input type="text" placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-11 pr-4 py-2.5 md:py-3 bg-white border border-gray-200 rounded-2xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm" />
                   </div>
-                  <div className="flex w-full lg:w-auto gap-2">
-                    <button onClick={exportToExcel} className="flex-1 lg:flex-none justify-center text-xs md:text-sm font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 px-4 py-2.5 md:py-3 rounded-xl flex items-center gap-2 transition-colors border border-emerald-200"><Download className="w-4 h-4" /> Excel</button>
-                    <button onClick={exportToPDF} className="flex-1 lg:flex-none justify-center text-xs md:text-sm font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 px-4 py-2.5 md:py-3 rounded-xl flex items-center gap-2 transition-colors border border-rose-200"><FileText className="w-4 h-4" /> PDF</button>
+                  <div className="flex w-full lg:w-auto gap-2 flex-wrap lg:flex-nowrap">
+                    <button onClick={exportToExcel} className="flex-1 lg:flex-none justify-center text-xs md:text-sm font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 px-4 py-2.5 md:py-3 rounded-xl flex items-center gap-2 transition-colors border border-emerald-200">
+                      <Download className="w-4 h-4" /> Export Data
+                    </button>
+                    <button onClick={exportToPDF} className="flex-1 lg:flex-none justify-center text-xs md:text-sm font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 hover:text-rose-800 px-4 py-2.5 md:py-3 rounded-xl flex items-center gap-2 transition-colors border border-rose-200">
+                      <FileText className="w-4 h-4" /> PDF
+                    </button>
                   </div>
                 </div>
 
                 <div className="overflow-x-auto max-h-[70vh] bg-gray-50 md:bg-white custom-scrollbar relative">
                   <table className="w-full text-sm text-left hidden md:table">
                     <thead className="bg-gray-50/90 uppercase text-[11px] font-black tracking-wider text-gray-500 sticky top-0 z-10 backdrop-blur-md shadow-sm">
-                      {activeTab === 'worker' ? (
+                      {activeTab === 'ceo' ? (
+                        <tr>
+                          <th className="px-4 py-4 border-b border-r border-gray-100 min-w-[160px] sticky left-0 bg-gray-50 z-20">Worker Name</th>
+                          {daysArray.map(d => <th key={d} className="px-2 py-4 border-b border-r border-gray-100 text-center min-w-[90px]">{d}</th>)}
+                          <th className="px-4 py-4 border-b border-r border-blue-100 text-blue-800 bg-blue-50/30 min-w-[100px]">Total Days</th>
+                          <th className="px-4 py-4 border-b border-r border-purple-100 text-purple-800 bg-purple-50/30 min-w-[100px]">Total OT</th>
+                          <th className="px-4 py-4 border-b border-r border-gray-100 min-w-[100px]">Daily Wage</th>
+                          <th className="px-4 py-4 border-b border-r border-gray-100 min-w-[100px]">OT Wage</th>
+                          <th className="px-4 py-4 border-b border-r border-emerald-100 text-emerald-800 bg-emerald-50/30 min-w-[130px]">Wage Amount</th>
+                          <th className="px-4 py-4 border-b border-r border-emerald-100 text-emerald-800 bg-emerald-50/30 min-w-[130px]">OT Amount</th>
+                          <th className="px-4 py-4 border-b border-gray-200 text-gray-900 bg-gray-200/50 min-w-[130px]">Total Payout</th>
+                        </tr>
+                      ) : activeTab === 'worker' ? (
                         <tr>
                           <th className="px-4 lg:px-6 py-4 border-b border-r border-gray-100">Worker Name</th>
                           <th className="px-4 lg:px-6 py-4 border-b border-r border-gray-100">Category</th>
@@ -1528,27 +1815,65 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                       )}
                     </thead>
                     <tbody>
-                      {filteredData.length > 0 ? (
+                      {activeTab === 'ceo' ? (
+                        isFetchingCeo ? <tr><td colSpan="25" className="text-center py-12 font-bold text-gray-400">Loading exact grid...</td></tr> :
+                          ceoData.length === 0 ? <tr><td colSpan="25" className="text-center py-12 font-medium text-gray-500">No data found</td></tr> :
+                            [
+                              { code: 'Mason', label: 'Masons' },
+                              { code: 'HalfMason', label: 'Half Masons' },
+                              { code: 'Helper', label: 'Helpers' }
+                            ].map(type => {
+                              const categoryData = ceoData.filter(r => r.type === type.code);
+                              if (categoryData.length === 0) return null;
+
+                              let subDays = 0, subOt = 0, subBase = 0, subOtCost = 0;
+
+                              return (
+                                <React.Fragment key={type.code}>
+                                  {/* NEW UI HEADER ROW */}
+                                  <tr>
+                                    <td colSpan="25" className="bg-gray-100 border-b border-gray-200 px-4 py-2 font-black text-gray-800 tracking-widest text-xs uppercase sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                                      {type.label}
+                                    </td>
+                                  </tr>
+                                  {categoryData.map((row, idx) => {
+                                    subDays += row.regDays; subOt += row.otHours; subBase += row.baseCost; subOtCost += row.otCost;
+                                    return (
+                                      <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50/80 bg-white transition-colors">
+                                        <td className="px-4 py-4 border-r border-gray-50 font-black text-gray-900 sticky left-0 bg-white z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] truncate max-w-[180px]">{row.worker}</td>
+                                        {daysArray.map(d => (
+                                          <td key={d} className="px-2 py-4 border-r border-gray-50 text-[10px] text-center font-bold text-gray-700 whitespace-nowrap">{row.daysMap[d]}</td>
+                                        ))}
+                                        <td className="px-4 py-4 border-r border-gray-50 font-black text-blue-900 bg-blue-50/10 text-center">{row.regDays}</td>
+                                        <td className="px-4 py-4 border-r border-gray-50 font-black text-purple-600 bg-purple-50/10 text-center">{row.otHours}</td>
+                                        <td className="px-4 py-4 border-r border-gray-50 font-medium text-gray-700 text-right">{row.wage.toFixed(2)}</td>
+                                        <td className="px-4 py-4 border-r border-gray-50 font-medium text-gray-700 text-right">{row.otRate.toFixed(2)}</td>
+                                        <td className="px-4 py-4 border-r border-emerald-100 font-bold text-emerald-700 bg-emerald-50/10 text-right">{formatCurrency(row.baseCost)}</td>
+                                        <td className="px-4 py-4 border-r border-emerald-100 font-bold text-emerald-700 bg-emerald-50/10 text-right">{formatCurrency(row.otCost)}</td>
+                                        <td className="px-4 py-4 font-black text-gray-900 bg-gray-50/50 text-right">{formatCurrency(row.baseCost + row.otCost)}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                  {/* UI SUBTOTAL ROW */}
+                                  <tr className="bg-gray-100/80 border-b-[3px] border-gray-300">
+                                    <td className="px-4 py-3 font-black text-gray-900 text-right uppercase text-[10px] tracking-widest sticky left-0 bg-gray-100/80 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">{type.label} TOTAL:</td>
+                                    {daysArray.map(d => <td key={d} className="border-r border-gray-200"></td>)}
+                                    <td className="px-4 py-3 font-black text-blue-900 text-center text-sm">{subDays}</td>
+                                    <td className="px-4 py-3 font-black text-purple-900 text-center text-sm">{subOt}</td>
+                                    <td className="px-4 py-3 border-r border-gray-200" colSpan="2"></td>
+                                    <td className="px-4 py-3 font-bold text-emerald-800 text-right">{formatCurrency(subBase)}</td>
+                                    <td className="px-4 py-3 font-bold text-emerald-800 text-right">{formatCurrency(subOtCost)}</td>
+                                    <td className="px-4 py-3 font-black text-gray-900 text-right text-sm">{formatCurrency(subBase + subOtCost)}</td>
+                                  </tr>
+                                </React.Fragment>
+                              );
+                            })
+                      ) : filteredData.length > 0 ? (
                         activeTab === 'worker' ? (
                           <>
-                            {masonsData.length > 0 && (
-                              <>
-                                {masonsData.map(renderDesktopWorkerRow)}
-                                {renderWorkerSubtotal(masonsData, "Mason", "bg-blue-50 text-blue-900")}
-                              </>
-                            )}
-                            {halfMasonsData.length > 0 && (
-                              <>
-                                {halfMasonsData.map(renderDesktopWorkerRow)}
-                                {renderWorkerSubtotal(halfMasonsData, "Half Mason", "bg-purple-50 text-purple-900")}
-                              </>
-                            )}
-                            {helpersData.length > 0 && (
-                              <>
-                                {helpersData.map(renderDesktopWorkerRow)}
-                                {renderWorkerSubtotal(helpersData, "Helper", "bg-orange-50 text-orange-900")}
-                              </>
-                            )}
+                            {masonsData.length > 0 && (<>{masonsData.map(renderDesktopWorkerRow)}{renderWorkerSubtotal(masonsData, "Mason", "bg-blue-50 text-blue-900")}</>)}
+                            {halfMasonsData.length > 0 && (<>{halfMasonsData.map(renderDesktopWorkerRow)}{renderWorkerSubtotal(halfMasonsData, "Half Mason", "bg-purple-50 text-purple-900")}</>)}
+                            {helpersData.length > 0 && (<>{helpersData.map(renderDesktopWorkerRow)}{renderWorkerSubtotal(helpersData, "Helper", "bg-orange-50 text-orange-900")}</>)}
                           </>
                         ) : (
                           filteredData.map((row, idx) => (
@@ -1565,7 +1890,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                           ))
                         )
                       ) : (
-                        <tr><td colSpan="9" className="px-6 py-12 text-center text-gray-500 font-medium">No records found</td></tr>
+                        <tr><td colSpan="25" className="px-6 py-12 text-center text-gray-500 font-medium">No records found</td></tr>
                       )}
                     </tbody>
                     {filteredData.length > 0 && (
@@ -1697,7 +2022,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       {/* DAILY CONTRACTOR REPORT MODAL */}
       {showReportModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-2 sm:p-4">
-          
+
           <style>
             {`
               @media print {
@@ -1719,7 +2044,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
           </style>
 
           <div className="bg-white rounded-[1.5rem] shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] print:shadow-none print:max-w-full">
-            
+
             {/* Modal Controls */}
             <div className="p-4 sm:p-5 bg-gray-50 border-b border-gray-100 rounded-t-[1.5rem] print-hide flex flex-col sm:flex-row gap-3 justify-between items-center">
               <div className="flex gap-2 w-full sm:w-auto">
@@ -1736,7 +2061,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
             {/* Printable Document Area */}
             <div id="printable-report" className="p-4 sm:p-6 overflow-y-auto custom-scrollbar bg-white rounded-b-[1.5rem] print:p-0">
-              
+
               <div className="text-center border-b-2 border-gray-900 pb-2 mb-4">
                 <h2 className="font-black text-xl text-gray-900 tracking-tight uppercase">{reportContractor}'s Daily Attendance</h2>
                 <p className="text-xs font-bold text-gray-500 mt-0.5 flex items-center justify-center gap-1"><Calendar className="w-3 h-3" /> {new Date(reportDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
@@ -1748,7 +2073,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                 <div className="space-y-4">
                   {dailyLogs.filter(log => log.date === reportDate && log.contractor === reportContractor).map(log => (
                     <div key={log.id} className="print-section border border-gray-200 rounded-xl p-3 print:border-gray-400 print:mb-4">
-                      
+
                       {/* Site Header */}
                       <h3 className="text-sm font-black text-gray-900 mb-2 bg-gray-50 p-2 rounded-lg border border-gray-200 flex items-center gap-1.5 print:bg-gray-100">
                         <MapPin className="w-4 h-4 text-blue-500" /> {getFullSiteName(log.site)}
