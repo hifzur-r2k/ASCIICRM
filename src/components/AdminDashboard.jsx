@@ -909,10 +909,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const exportToPDF = () => {
     if (activeTab !== 'ceo' && filteredData.length === 0) return alert("No data to export.");
     try {
-      // Use massive A3 Landscape for CEO, standard A4 Landscape for others
       const doc = activeTab === 'ceo' ? new jsPDF('l', 'mm', 'a3') : new jsPDF('l', 'mm', 'a4');
-
-      // Sleek Corporate Header
       doc.setFontSize(22); doc.setTextColor(15, 23, 42);
       doc.text("Financial & Attendance Report", 14, 20);
       doc.setFontSize(10); doc.setTextColor(100, 116, 139);
@@ -929,18 +926,22 @@ export default function AdminDashboard({ currentUser, onLogout }) {
         headers.push("Days", "OT", "Wage", "OT Rate", "Wage Amt", "OT Amt", "Payout");
         head = [headers];
 
-        // Zero Negative Space: Strict Column Alignment & Widths
+        // EXACT EXCEL COLOR REPLICATION
+        const colGreen = [220, 252, 231];
+        const colYellow = [254, 249, 195];
+        const colBlue = [219, 234, 254];
+
         let cIdx = 0;
         dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 10 }; // SN
-        dynamicColStyles[cIdx++] = { halign: 'left', cellWidth: 40 };   // Name
-        daysArray.forEach(() => { dynamicColStyles[cIdx++] = { halign: 'center' }; }); // Days (Auto tight fit)
-        dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 14, fillColor: [248, 250, 252] }; // Days
-        dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 14, fillColor: [248, 250, 252] }; // OT
-        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 18 };  // Wage
-        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 18 };  // OT Rate
-        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 24, fillColor: [248, 250, 252] }; // Wage Amt
-        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 22, fillColor: [248, 250, 252] }; // OT Amt
-        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 26, fontStyle: 'bold', textColor: [15, 23, 42], fillColor: [241, 245, 249] }; // Payout
+        dynamicColStyles[cIdx++] = { halign: 'left', cellWidth: 42 };   // Name
+        daysArray.forEach(() => { dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 11 }; }); // Days
+        dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 14, fillColor: colGreen }; // Total Days
+        dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 14, fillColor: colYellow }; // Total OT
+        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 18, fillColor: colBlue };  // Wage
+        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 18, fillColor: colBlue };  // OT Rate
+        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 22, fillColor: colBlue }; // Wage Amt
+        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 20, fillColor: colBlue }; // OT Amt
+        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 26, fontStyle: 'bold', textColor: [15, 23, 42], fillColor: [203, 213, 225] }; // Payout
 
         let globalSn = 1;
 
@@ -948,8 +949,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
           const data = ceoData.filter(r => r.type === typeCode);
           if (data.length === 0) return;
 
-          // Clean Category Banner
-          body.push([{ content: typeLabel.toUpperCase(), colSpan: headers.length, styles: { fillColor: [226, 232, 240], fontStyle: 'bold', textColor: [15, 23, 42], halign: 'left' } }]);
+          body.push([{ content: typeLabel.toUpperCase(), colSpan: headers.length, styles: { fillColor: [51, 65, 85], fontStyle: 'bold', textColor: [255, 255, 255], halign: 'center' } }]);
 
           let subDays = 0, subOt = 0, subBase = 0, subOtCost = 0;
           data.forEach(row => {
@@ -965,22 +965,18 @@ export default function AdminDashboard({ currentUser, onLogout }) {
             body.push(r);
           });
 
-          // Subtotal Row with Custom Colors
           let subR = [{ content: `${typeLabel.toUpperCase()} SUBTOTAL`, colSpan: 2, styles: { halign: 'right', fontStyle: 'bold', fillColor: [241, 245, 249] } }];
           daysArray.forEach(d => subR.push({ content: "", styles: { fillColor: [241, 245, 249] } }));
           subR.push(
-            { content: String(subDays), styles: { fontStyle: 'bold', halign: 'center', fillColor: [241, 245, 249] } },
-            { content: String(subOt), styles: { fontStyle: 'bold', halign: 'center', fillColor: [241, 245, 249] } },
-            { content: "", styles: { fillColor: [241, 245, 249] } },
-            { content: "", styles: { fillColor: [241, 245, 249] } },
-            { content: formatNum(subBase), styles: { fontStyle: 'bold', halign: 'right', fillColor: [241, 245, 249] } },
-            { content: formatNum(subOtCost), styles: { fontStyle: 'bold', halign: 'right', fillColor: [241, 245, 249] } },
-            { content: formatNum(subBase + subOtCost), styles: { fontStyle: 'bold', halign: 'right', fillColor: [241, 245, 249], textColor: [16, 185, 129] } } // Emerald Text
+            { content: String(subDays), styles: { fontStyle: 'bold', halign: 'center', fillColor: colGreen } },
+            { content: String(subOt), styles: { fontStyle: 'bold', halign: 'center', fillColor: colYellow } },
+            { content: "", styles: { fillColor: colBlue } },
+            { content: "", styles: { fillColor: colBlue } },
+            { content: formatNum(subBase), styles: { fontStyle: 'bold', halign: 'right', fillColor: colBlue } },
+            { content: formatNum(subOtCost), styles: { fontStyle: 'bold', halign: 'right', fillColor: colBlue } },
+            { content: formatNum(subBase + subOtCost), styles: { fontStyle: 'bold', halign: 'right', fillColor: [203, 213, 225] } }
           );
           body.push(subR);
-
-          // Visual Spacer
-          body.push([{ content: "", colSpan: headers.length, styles: { fillColor: [255, 255, 255], cellPadding: 2, lineWidth: 0 } }]);
         };
 
         processCatToPDF('Mason', 'Masons');
@@ -992,13 +988,16 @@ export default function AdminDashboard({ currentUser, onLogout }) {
         let grandBase = ceoData.reduce((acc, r) => acc + (r.baseCost || 0), 0);
         let grandOtCost = ceoData.reduce((acc, r) => acc + (r.otCost || 0), 0);
 
-        // Massive Dark Footer
-        let ft = [{ content: "GRAND TOTAL", colSpan: 2, styles: { halign: 'right' } }];
-        daysArray.forEach(d => ft.push(""));
+        let ft = [{ content: "GRAND TOTAL", colSpan: 2, styles: { halign: 'right', fillColor: [15, 23, 42], textColor: [255, 255, 255] } }];
+        daysArray.forEach(d => ft.push({ content: "", styles: { fillColor: [15, 23, 42] } }));
         ft.push(
-          String(grandDays), String(grandOt), "", "",
-          formatNum(grandBase), formatNum(grandOtCost),
-          { content: formatNum(grandBase + grandOtCost), styles: { textColor: [52, 211, 153] } } // Pop Green
+          { content: String(grandDays), styles: { halign: 'center', fillColor: [15, 23, 42], textColor: [255, 255, 255] } },
+          { content: String(grandOt), styles: { halign: 'center', fillColor: [15, 23, 42], textColor: [255, 255, 255] } },
+          { content: "", styles: { fillColor: [15, 23, 42] } },
+          { content: "", styles: { fillColor: [15, 23, 42] } },
+          { content: formatNum(grandBase), styles: { halign: 'right', fillColor: [15, 23, 42], textColor: [255, 255, 255] } },
+          { content: formatNum(grandOtCost), styles: { halign: 'right', fillColor: [15, 23, 42], textColor: [255, 255, 255] } },
+          { content: formatNum(grandBase + grandOtCost), styles: { halign: 'right', fillColor: [15, 23, 42], textColor: [52, 211, 153] } }
         );
         foot = [ft];
       }
@@ -1006,7 +1005,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
         head = [["Worker Name", "Category", "Total Days", "OT (Hrs)", "Base Pay (Rs)", "OT Pay (Rs)", "Total Payout (Rs)"]];
         const addCategoryToPDF = (data, catName) => {
           if (data.length === 0) return;
-          data.forEach(row => { body.push([row.worker, row.type, row.regDays, row.otHours, formatNum(row.totalBaseCost), formatNum(row.totalOTCost), formatNum(row.totalBaseCost + row.totalOTCost)]); });
+          data.forEach(row => { body.push([row.worker, row.type, String(row.regDays || 0), String(row.otHours || 0), formatNum(row.totalBaseCost || 0), formatNum(row.totalOTCost || 0), formatNum((row.totalBaseCost || 0) + (row.totalOTCost || 0))]); });
           const sub = calcSubtotals(data);
           body.push([{ content: `${catName.toUpperCase()} SUBTOTAL`, colSpan: 2, styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }, { content: String(sub.days), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }, { content: String(sub.ot), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }, { content: formatNum(sub.base), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }, { content: formatNum(sub.otPay), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }, { content: formatNum(sub.base + sub.otPay), styles: { fillColor: [241, 245, 249], fontStyle: 'bold', textColor: [15, 23, 42] } }]);
         };
@@ -1024,16 +1023,17 @@ export default function AdminDashboard({ currentUser, onLogout }) {
         foot = [ft];
       }
 
-      // THE CORE PDF STYLING ENGINE
       autoTable(doc, {
         startY: 38,
         head: head,
         body: body,
         foot: foot,
-        theme: 'grid', // Cleaner spreadsheet look
-        margin: { left: 10, right: 10, top: 38, bottom: 15 },
+        theme: 'grid',
+        margin: { left: 10, right: 10, top: 25, bottom: 15 },
+        showHead: 'everyPage',
+        rowPageBreak: 'avoid',
         headStyles: {
-          fillColor: [15, 23, 42], // Deep Navy
+          fillColor: [15, 23, 42],
           textColor: [255, 255, 255],
           fontStyle: 'bold',
           halign: 'center',
@@ -1045,13 +1045,31 @@ export default function AdminDashboard({ currentUser, onLogout }) {
           fontStyle: 'bold'
         },
         styles: {
-          fontSize: activeTab === 'ceo' ? 7.5 : 9, // Tighter font for A3
-          cellPadding: 1.5, // Less empty space
-          lineColor: [203, 213, 225], // Subtle slate borders
+          fontSize: activeTab === 'ceo' ? 7.5 : 9,
+          cellPadding: 1.5,
+          lineColor: [226, 232, 240],
           lineWidth: 0.1,
           valign: 'middle'
         },
-        columnStyles: dynamicColStyles
+        columnStyles: dynamicColStyles,
+        didParseCell: function (data) {
+          if (activeTab === 'ceo' && data.section === 'body') {
+            // LIGHT RED FOR '0 NA' & LIGHT GREEN FOR ACTIVE DAYS
+            if (data.column.index >= 2 && data.column.index < 2 + daysArray.length) {
+              if (typeof data.cell.raw === 'string') {
+                if (data.cell.raw === "0 NA") {
+                  data.cell.styles.fillColor = [254, 226, 226]; // Light Red background
+                  data.cell.styles.textColor = [185, 28, 28];   // Dark Red text
+                  data.cell.styles.fontStyle = 'bold';
+                } else if (data.cell.raw !== "") {
+                  data.cell.styles.fillColor = [220, 252, 231]; // Light Green background
+                  data.cell.styles.textColor = [4, 120, 87];    // Dark Green text
+                  data.cell.styles.fontStyle = 'bold';
+                }
+              }
+            }
+          }
+        }
       });
 
       doc.save(`CRM_FIX_${selectedRecordContractor}_${activeTab}_${sheetName}.pdf`);
