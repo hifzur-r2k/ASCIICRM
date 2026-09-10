@@ -388,6 +388,16 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
           timestamp: Date.now(), submittedBy: currentUser?.email || "Unknown User"
         });
         createdLogId = newLogRef.id;
+        createdLogId = newLogRef.id;
+
+        // NEW SECURITY LOCK: If this was a past date, lock the permission immediately!
+        if (supDate < todayStr) {
+          const usedRequest = myRequests.find(r => r.date === supDate && r.status === 'approved' && r.type === 'backdate');
+          if (usedRequest) {
+            await updateDoc(doc(db, COLL_REQS, usedRequest.id), { status: 'completed' });
+          }
+        }
+
         // Trigger the sleek mobile toast instead of the ugly browser alert
         setToastMessage("✅ Attendance Secured Successfully!");
         setTimeout(() => setToastMessage(""), 3000);
@@ -477,19 +487,19 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
 
   const renderCategoryUI = (list, title, colorClass, dotColor) => {
     if (list.length === 0) return null;
-    
+
     // Check if this specific category is collapsed
     const isCollapsed = collapsedCats[title];
 
     return (
       <div className="space-y-2">
         {/* THE COLLAPSIBLE HEADER */}
-        <div 
+        <div
           onClick={() => toggleCategory(title)}
           className="flex items-center justify-between cursor-pointer border-b border-gray-100 pb-1.5 transition-all active:opacity-50 select-none px-1"
         >
           <h4 className={`text-[10px] font-black ${colorClass} uppercase tracking-widest flex items-center gap-1.5`}>
-            <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`}></div> 
+            <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`}></div>
             {title} <span className="text-gray-400 ml-1">({list.length})</span>
           </h4>
           <div className="p-1 rounded-md bg-gray-50 hover:bg-gray-100 transition-colors">
@@ -507,20 +517,22 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
               const cardBg = isA ? 'bg-gray-50/50 border-gray-100' : 'bg-emerald-50/40 border-emerald-300 shadow-sm';
 
               return (
-                <div key={worker.name} className={`px-2 md:px-3 py-2.5 rounded-xl border transition-all flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 md:gap-4 ${cardBg} ${worker.isProvisional ? 'border-dashed border-orange-300' : ''}`}>
+                <div key={worker.name} className={`px-2 md:px-3 py-3 rounded-xl border transition-all flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 ${cardBg} ${worker.isProvisional ? 'border-dashed border-orange-300' : ''}`}>
                   <div>
                     <p className="font-black text-gray-900 text-sm min-w-0 truncate">{worker.name}</p>
                     {worker.isProvisional && <p className="text-[9px] font-bold text-orange-500 uppercase tracking-widest mt-0.5">Pending Admin Approval</p>}
                   </div>
-                  <div className="flex items-center justify-between md:justify-end gap-1.5 shrink-0">
-                    <div className="flex bg-gray-100/80 p-0.5 rounded-lg border border-gray-200/50 flex-1 md:flex-none justify-between shadow-inner">
-                      <button onClick={() => handleAttendanceChange(worker.name, '2P')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${is2P ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>2P</button>
-                      <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isP ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
-                      <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isHD ? 'bg-yellow-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
-                      <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`flex-1 px-2.5 py-1.5 rounded-md text-[10px] font-black transition-all ${isA ? 'bg-white text-gray-900 border border-gray-300 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
+                  <div className="flex items-center justify-between md:justify-end gap-2 shrink-0">
+                    {/* BUTTONS INCREASED TO 44px TALL FOR MOBILE TAPPING */}
+                    <div className="flex bg-gray-100/80 p-1 rounded-xl border border-gray-200/50 flex-1 md:flex-none justify-between shadow-inner h-[44px]">
+                      <button onClick={() => handleAttendanceChange(worker.name, '2P')} className={`flex-1 px-3 rounded-lg text-xs font-black transition-all ${is2P ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>2P</button>
+                      <button onClick={() => handleAttendanceChange(worker.name, 'present')} className={`flex-1 px-3 rounded-lg text-xs font-black transition-all ${isP ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>P</button>
+                      <button onClick={() => handleAttendanceChange(worker.name, 'half')} className={`flex-1 px-3 rounded-lg text-xs font-black transition-all ${isHD ? 'bg-yellow-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>HD</button>
+                      <button onClick={() => handleAttendanceChange(worker.name, 'absent')} className={`flex-1 px-3 rounded-lg text-xs font-black transition-all ${isA ? 'bg-white text-gray-900 border border-gray-300 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>A</button>
                     </div>
+                    {/* OT INPUT INCREASED TO 44px TALL */}
                     <div className="w-16 shrink-0 relative">
-                      <input type="number" inputMode="decimal" pattern="[0-9]*" placeholder="Hrs" value={rec.ot || ''} max="12" min="0" onChange={(e) => handleOTChange(worker.name, e.target.value)} className={`w-full h-8 px-1 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 text-center transition-all ${rec.ot ? 'bg-emerald-100 text-emerald-900 border border-emerald-400' : 'bg-white border border-gray-200 text-gray-800'}`} />
+                      <input type="number" inputMode="decimal" pattern="[0-9]*" placeholder="Hrs" value={rec.ot || ''} max="12" min="0" onChange={(e) => handleOTChange(worker.name, e.target.value)} className={`w-full h-[44px] px-1 rounded-xl text-xs font-black outline-none focus:ring-2 focus:ring-emerald-500/20 text-center transition-all ${rec.ot ? 'bg-emerald-100 text-emerald-900 border border-emerald-400' : 'bg-white border border-gray-200 text-gray-800'}`} />
                     </div>
                   </div>
                 </div>
@@ -549,8 +561,8 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
           <button onClick={() => window.location.reload()} className="text-xs font-bold bg-gray-100 hover:bg-blue-50 hover:text-blue-600 text-gray-600 p-2 rounded-xl transition-colors" title="Sync Data">
             <RefreshCw className="w-4 h-4" />
           </button>
-          <button onClick={onLogout} className="text-xs font-bold bg-gray-100 hover:bg-red-50 hover:text-red-600 text-gray-600 p-2 rounded-xl transition-colors" title="Sign Out">
-            <LogOut className="w-4 h-4" />
+          <button onClick={onLogout} className="text-xs font-black bg-red-50 hover:bg-red-500 text-red-600 hover:text-white px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm border border-red-100" title="Sign Out">
+            <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Sign Out</span>
           </button>
         </div>
       </header>
@@ -724,7 +736,13 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                       </button>
                     )}
                     <button onClick={submitDailyLog} disabled={isSubmittingLog || activeContractorWorkers.length === 0} className={`w-full flex-1 font-black py-3.5 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all ${isSubmittingLog || activeContractorWorkers.length === 0 ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : editingLog ? 'bg-yellow-500 hover:bg-yellow-600 text-white shadow-yellow-500/30' : 'bg-gray-900 hover:bg-emerald-600 text-white shadow-gray-900/20'}`}>
-                      {editingLog ? <Edit2 className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                      {isSubmittingLog ? (
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                      ) : editingLog ? (
+                        <Edit2 className="w-4 h-4" />
+                      ) : (
+                        <Save className="w-4 h-4" />
+                      )}
                       {isSubmittingLog ? 'Saving...' : editingLog ? "Update Attendance" : "Secure Today's Attendance"}
                     </button>
                   </div>
