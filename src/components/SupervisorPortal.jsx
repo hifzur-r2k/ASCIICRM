@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  LayoutGrid, Search, Save, LogOut, Calendar, Users, MapPin, HardHat, ChevronDown, Clock, Edit2, AlertCircle, RefreshCw, Eye, EyeOff, Plus, X
+  LayoutGrid, Search, Save, LogOut, Calendar, Users, MapPin, HardHat, ChevronDown, Clock, Edit2, AlertCircle, RefreshCw, Eye, EyeOff, Plus, X, ClipboardList
 } from 'lucide-react';
 import { collection, addDoc, getDocs, doc, query, where, runTransaction, updateDoc } from "firebase/firestore";
 import { db } from '../firebase';
@@ -667,7 +667,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
               </div>
             </div>
 
-            {supContractor && (
+            {supContractor ? (
               <div className="pt-4 md:pt-6 border-t border-gray-100">
                 <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-2 mb-4">
                   <div className="flex items-center justify-between sm:justify-start gap-3">
@@ -747,6 +747,18 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                     </button>
                   </div>
                 </div>
+              </div>
+            ) : (
+              /* THE NEW ENGAGING EMPTY STATE */
+              <div className="mt-4 py-16 md:py-24 flex flex-col items-center justify-center text-center border-2 border-dashed border-gray-200 rounded-[1.5rem] bg-gray-50/50 animate-in fade-in zoom-in-95 duration-500 px-4">
+                <div className="bg-white p-5 rounded-full shadow-sm border border-gray-100 mb-5 relative">
+                  <div className="absolute inset-0 bg-emerald-100 rounded-full animate-ping opacity-20"></div>
+                  <ClipboardList className="w-10 h-10 text-emerald-500 relative z-10" />
+                </div>
+                <h3 className="text-lg font-black text-gray-900 mb-2 tracking-tight">Awaiting Selection</h3>
+                <p className="text-xs md:text-sm font-bold text-gray-400 max-w-[220px] md:max-w-[280px] leading-relaxed">
+                  Select a Site and Contractor Team above to load today's attendance.
+                </p>
               </div>
             )}
           </div>
