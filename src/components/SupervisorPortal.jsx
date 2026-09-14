@@ -36,6 +36,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
   const [expandedLogId, setExpandedLogId] = useState(null);
 
   const [toastMessage, setToastMessage] = useState("");
+  const [isAppLoading, setIsAppLoading] = useState(true);
 
   // --- TEST MODE DETECTOR ---
   const isTestMode = currentUser?.email?.toLowerCase()?.includes('test') || false;
@@ -75,6 +76,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
 
   useEffect(() => {
     const fetchMasterData = async () => {
+      setIsAppLoading(true); // START SKELETON LOADER
       try {
         const masterSnap = await getDocs(collection(db, "master_data"));
         let loadedSites = [];
@@ -98,6 +100,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
         setMasterSites(loadedSites.sort());
         setMasterWorkers(loadedWorkers);
       } catch (err) { console.error("Error fetching master data:", err); }
+      setIsAppLoading(false); // STOP SKELETON LOADER
     };
     fetchMasterData();
   }, []);
@@ -561,7 +564,7 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
           <button onClick={() => window.location.reload()} className="text-xs font-bold bg-gray-100 hover:bg-blue-50 hover:text-blue-600 text-gray-600 p-2 rounded-xl transition-colors" title="Sync Data">
             <RefreshCw className="w-4 h-4" />
           </button>
-          <button onClick={onLogout} className="text-xs font-black bg-red-50 hover:bg-red-500 text-red-600 hover:text-white px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm border border-red-100" title="Sign Out">
+          <button onClick={() => { if (window.confirm("Are you sure you want to sign out?")) onLogout(); }} className="text-xs font-black bg-red-50 hover:bg-red-500 text-red-600 hover:text-white px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm border border-red-100" title="Sign Out">
             <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Sign Out</span>
           </button>
         </div>
@@ -749,15 +752,19 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                 </div>
               </div>
             ) : (
-              /* THE NEW ENGAGING EMPTY STATE */
-              <div className="mt-4 py-16 md:py-24 flex flex-col items-center justify-center text-center border-2 border-dashed border-gray-200 rounded-[1.5rem] bg-gray-50/50 animate-in fade-in zoom-in-95 duration-500 px-4">
-                <div className="bg-white p-5 rounded-full shadow-sm border border-gray-100 mb-5 relative">
-                  <div className="absolute inset-0 bg-emerald-100 rounded-full animate-ping opacity-20"></div>
-                  <ClipboardList className="w-10 h-10 text-emerald-500 relative z-10" />
+              /* THE PREMIUM SaaS EMPTY STATE */
+              <div className="mt-8 py-16 md:py-20 flex flex-col items-center justify-center text-center border-[3px] border-dashed border-gray-200/60 rounded-[2rem] bg-gradient-to-b from-gray-50/50 to-white relative overflow-hidden animate-in zoom-in-95 duration-500">
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 bg-emerald-400/10 rounded-full blur-3xl pointer-events-none"></div>
+                <div className="relative mb-6 group cursor-default">
+                  <div className="absolute inset-0 bg-emerald-200 rounded-2xl rotate-6 transition-transform group-hover:rotate-12 duration-300"></div>
+                  <div className="absolute inset-0 bg-emerald-100 rounded-2xl -rotate-6 transition-transform group-hover:-rotate-12 duration-300"></div>
+                  <div className="bg-white p-5 rounded-2xl shadow-xl border border-emerald-50 relative z-10 transform transition-transform group-hover:scale-105 duration-300 flex items-center justify-center">
+                    <ClipboardList className="w-12 h-12 text-emerald-500 drop-shadow-md" strokeWidth={1.5} />
+                  </div>
                 </div>
-                <h3 className="text-lg font-black text-gray-900 mb-2 tracking-tight">Awaiting Selection</h3>
-                <p className="text-xs md:text-sm font-bold text-gray-400 max-w-[220px] md:max-w-[280px] leading-relaxed">
-                  Select a Site and Contractor Team above to load today's attendance.
+                <h3 className="text-xl font-black text-gray-900 mb-2 tracking-tight">Ready for Roll Call</h3>
+                <p className="text-sm font-bold text-gray-400 max-w-[260px] leading-relaxed">
+                  Select a <span className="text-emerald-600">Site</span> and <span className="text-emerald-600">Team</span> above to generate today's attendance roster.
                 </p>
               </div>
             )}
