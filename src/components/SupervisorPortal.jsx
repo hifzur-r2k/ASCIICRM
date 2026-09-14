@@ -37,6 +37,8 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
 
   const [toastMessage, setToastMessage] = useState("");
   const [isAppLoading, setIsAppLoading] = useState(true);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  
 
   // --- TEST MODE DETECTOR ---
   const isTestMode = currentUser?.email?.toLowerCase()?.includes('test') || false;
@@ -557,18 +559,44 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
           <div className="p-1.5 rounded-lg bg-emerald-600"><LayoutGrid className="w-4 h-4 text-white" /></div>
           <span className="font-black text-gray-900 text-sm tracking-tight">CRM_FIX <span className="text-gray-400 font-medium hidden sm:inline">| Field Portal</span></span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 relative z-[60]">
           <div className="flex items-center bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold shadow-inner">
             <HardHat className="w-3.5 h-3.5 mr-1" /> {currentUser?.email?.split('@')[0]}
           </div>
           <button onClick={() => window.location.reload()} className="text-xs font-bold bg-gray-100 hover:bg-blue-50 hover:text-blue-600 text-gray-600 p-2 rounded-xl transition-colors" title="Sync Data">
             <RefreshCw className="w-4 h-4" />
           </button>
-          <button onClick={() => { if (window.confirm("Are you sure you want to sign out?")) onLogout(); }} className="text-xs font-black bg-red-50 hover:bg-red-500 text-red-600 hover:text-white px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm border border-red-100" title="Sign Out">
-            <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Sign Out</span>
+          
+          {/* BULLETPROOF BUTTON: Forced to the top layer with cursor-pointer */}
+          <button onClick={() => setShowLogoutConfirm(true)} className="relative z-[60] cursor-pointer text-xs font-black bg-red-50 hover:bg-red-500 text-red-600 hover:text-white px-3 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-sm border border-red-100" title="Sign Out">
+            <LogOut className="w-4 h-4 pointer-events-none" /> <span className="hidden sm:inline pointer-events-none">Sign Out</span>
           </button>
         </div>
       </header>
+
+      {/* PREMIUM LOGOUT CONFIRMATION MODAL */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-gray-900/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 md:p-8 text-center">
+              <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-5 border-[4px] border-white outline outline-1 outline-red-100 shadow-sm">
+                <LogOut className="w-7 h-7 ml-1" />
+              </div>
+              <h3 className="text-xl font-black text-gray-900 mb-2">Sign Out</h3>
+              <p className="text-sm font-bold text-gray-500 mb-8 leading-relaxed">Are you sure you want to securely sign out of the Field Portal?</p>
+              <div className="flex gap-3">
+                <button onClick={() => setShowLogoutConfirm(false)} className="flex-1 py-3.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-black rounded-xl transition-colors">
+                  Cancel
+                </button>
+                <button onClick={() => { setShowLogoutConfirm(false); onLogout(); }} className="flex-1 py-3.5 px-4 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl shadow-md shadow-red-500/20 transition-all">
+                  Yes, Sign Out
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MOBILE-OPTIMIZED FLOATING TOAST */}
       {toastMessage && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top-4 fade-in duration-300 w-[90%] max-w-sm">
@@ -752,19 +780,15 @@ export default function SupervisorPortal({ currentUser, onLogout }) {
                 </div>
               </div>
             ) : (
-              /* THE PREMIUM SaaS EMPTY STATE */
-              <div className="mt-8 py-16 md:py-20 flex flex-col items-center justify-center text-center border-[3px] border-dashed border-gray-200/60 rounded-[2rem] bg-gradient-to-b from-gray-50/50 to-white relative overflow-hidden animate-in zoom-in-95 duration-500">
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 bg-emerald-400/10 rounded-full blur-3xl pointer-events-none"></div>
-                <div className="relative mb-6 group cursor-default">
-                  <div className="absolute inset-0 bg-emerald-200 rounded-2xl rotate-6 transition-transform group-hover:rotate-12 duration-300"></div>
-                  <div className="absolute inset-0 bg-emerald-100 rounded-2xl -rotate-6 transition-transform group-hover:-rotate-12 duration-300"></div>
-                  <div className="bg-white p-5 rounded-2xl shadow-xl border border-emerald-50 relative z-10 transform transition-transform group-hover:scale-105 duration-300 flex items-center justify-center">
-                    <ClipboardList className="w-12 h-12 text-emerald-500 drop-shadow-md" strokeWidth={1.5} />
-                  </div>
+              /* THE NEW ENGAGING EMPTY STATE */
+              <div className="mt-4 py-16 md:py-24 flex flex-col items-center justify-center text-center border-2 border-dashed border-gray-200 rounded-[1.5rem] bg-gray-50/50 animate-in fade-in zoom-in-95 duration-500 px-4">
+                <div className="bg-white p-5 rounded-full shadow-sm border border-gray-100 mb-5 relative">
+                  <div className="absolute inset-0 bg-emerald-100 rounded-full animate-ping opacity-20"></div>
+                  <ClipboardList className="w-10 h-10 text-emerald-500 relative z-10" />
                 </div>
-                <h3 className="text-xl font-black text-gray-900 mb-2 tracking-tight">Ready for Roll Call</h3>
-                <p className="text-sm font-bold text-gray-400 max-w-[260px] leading-relaxed">
-                  Select a <span className="text-emerald-600">Site</span> and <span className="text-emerald-600">Team</span> above to generate today's attendance roster.
+                <h3 className="text-lg font-black text-gray-900 mb-2 tracking-tight">Awaiting Selection</h3>
+                <p className="text-xs md:text-sm font-bold text-gray-400 max-w-[220px] md:max-w-[280px] leading-relaxed">
+                  Select a Site and Contractor Team above to load today's attendance.
                 </p>
               </div>
             )}
