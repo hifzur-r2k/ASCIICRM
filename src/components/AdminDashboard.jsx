@@ -53,6 +53,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   const [sheetContractor, setSheetContractor] = useState("");
   const [selectedRecordContractor, setSelectedRecordContractor] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [recordSearch, setRecordSearch] = useState("");
   const fileInputRef = useRef(null);
   const rosterInputRef = useRef(null);
   const [dashboardTab, setDashboardTab] = useState('upload');
@@ -77,6 +78,19 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   // --- ANALYTICS STATES ---
   const [globalSearch, setGlobalSearch] = useState("");
   const [analyticsMode, setAnalyticsMode] = useState('single');
+  const [showSiteDropdown, setShowSiteDropdown] = useState(false);
+  const searchContainerRef = useRef(null);
+
+  // This ensures the dropdown closes if you click anywhere else on the screen
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target)) {
+        setShowSiteDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
   const [compareSiteInput, setCompareSiteInput] = useState("");
   const [compareSitesList, setCompareSitesList] = useState([]);
   const [startDate, setStartDate] = useState("");
@@ -646,17 +660,36 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
   const deleteRecord = async (id, e) => {
     e.stopPropagation();
-    if (!window.confirm("Are you sure you want to permanently delete this entire 15-day period?")) return;
+
+    // 1. Ask for the Master Admin password first
+    const enteredPassword = window.prompt(`SECURITY LOCK\nEnter password to PERMANENTLY delete ${id}`);
+    if (!enteredPassword) return;
+
+    // 2. Verify the password with Firebase
+    try {
+      await signInWithEmailAndPassword(auth, currentUser.email, enteredPassword);
+    } catch (error) {
+      return alert("🚨 INCORRECT PASSWORD! Deletion blocked.");
+    }
+
+    // 3. Final confirmation after correct password
+    if (!window.confirm(`FINAL WARNING: delete ALL records for ${id}? This cannot be undone.`)) return;
+
+    // 4. Delete the sheet
     try {
       await deleteDoc(doc(db, COLL_SHEETS, id));
       setSavedSheets(savedSheets.filter(sheet => sheet.id !== id));
       if (hasSavedCurrent) goHome();
-    } catch (error) { console.error("Error deleting:", error); }
+      alert(`Successfully deleted period ${id}.`);
+    } catch (error) {
+      console.error("Error deleting:", error);
+      alert("Failed to delete the record.");
+    }
   };
 
   const deleteContractorRecord = async (contractorName, e) => {
     e.stopPropagation();
-    const enteredPassword = window.prompt(`SECURITY LOCK\nEnter your Master Admin password to PERMANENTLY delete ${contractorName}'s records:`);
+    const enteredPassword = window.prompt(`SECURITY LOCK\nEnter password to PERMANENTLY delete ${contractorName}'s records:`);
     if (!enteredPassword) return;
 
     try {
@@ -665,7 +698,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       return alert("🚨 INCORRECT PASSWORD! Deletion blocked.");
     }
 
-    if (!window.confirm(`FINAL WARNING: Are you absolutely sure you want to delete all records for ${contractorName}?`)) return;
+    if (!window.confirm(`FINAL WARNING: Delete all records for ${contractorName}?`)) return;
 
     try {
       const newSiteData = siteData.filter(s => s.contractor !== contractorName);
@@ -697,7 +730,37 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     setSiteData(sheet.siteData || []); setDayData(sheet.dayData || []); setWorkerData(sheet.workerData || []);
     setHasSavedCurrent(true); setSearchQuery(""); setSelectedRecordContractor(null);
   };
+  // --- NEW: SMART AUTOCOMPLETE LOGIC ---
+  const [showDropdown, setShowDropdown] = useState(false);
 
+  const getSmartSuggestions = (input) => {
+    if (!input.trim()) return [];
+    const query = input.toLowerCase().trim();
+
+    // 1. Filter all master sites that match the letters typed
+    let matches = masterSites.filter(site => {
+      const code = getSiteCode(site).toLowerCase();
+      const name = site.includes('|') ? site.split('|')[1].toLowerCase() : "";
+      return code.includes(query) || name.includes(query);
+    });
+
+    // 2. Sort: Exact site code match goes straight to the #1 spot
+    matches.sort((a, b) => {
+      const codeA = getSiteCode(a).toLowerCase();
+      const codeB = getSiteCode(b).toLowerCase();
+      if (codeA === query && codeB !== query) return -1;
+      if (codeB === query && codeA !== query) return 1;
+      return 0;
+    });
+
+    return matches;
+  };
+  const searchSuggestions = getSmartSuggestions(globalSearch);
+
+  const handleSelectSite = (siteString) => {
+    setGlobalSearch(getSiteCode(siteString)); // Fill the bar with just the shortcode
+    setShowDropdown(false); // Hide the list
+  };
   const getGlobalAnalytics = () => {
     if (!globalSearch.trim()) return null;
     const targetSite = globalSearch.toLowerCase().trim();
@@ -710,7 +773,10 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       const sMonth = sheet.id.substring(0, 7);
 
       (sheet.dayData || []).forEach(d => {
-        if (d.site.toLowerCase() === targetSite || getFullSiteName(d.site).toLowerCase().includes(targetSite)) {
+        const exactCodeMatch = getSiteCode(d.site).toLowerCase() === targetSite;
+        const exactNameMatch = getFullSiteName(d.site).toLowerCase() === targetSite;
+
+        if (exactCodeMatch || exactNameMatch) {
           const recordDateStr = `${sMonth}-${String(d.day).padStart(2, '0')}`;
           let inRange = true;
           if (startDate && recordDateStr < startDate) inRange = false;
@@ -1222,119 +1288,389 @@ export default function AdminDashboard({ currentUser, onLogout }) {
             </div>
 
             {dashboardTab === 'upload' && (
-              <div className="max-w-2xl mx-auto space-y-4">
-                <div onClick={() => fileInputRef.current?.click()} className="group w-full cursor-pointer bg-white rounded-[2.5rem] border-2 border-dashed border-gray-200 hover:border-blue-500 hover:bg-blue-50/50 transition-all duration-300 p-8 md:p-16 shadow-sm hover:shadow-xl text-center">
-                  <div className="flex flex-col items-center justify-center space-y-6">
-                    <div className="bg-blue-50 text-blue-600 p-6 rounded-full group-hover:scale-110 group-hover:bg-blue-100 transition-all duration-300"><UploadCloud className="w-12 h-12" /></div>
-                    <div><p className="text-xl md:text-2xl font-black text-gray-800">Upload Financial Sheet</p><p className="text-sm md:text-base font-medium text-gray-500 mt-2">Parse attendance and generate site analytics instantly.</p></div>
-                    <span className="mt-4 px-8 py-3.5 bg-gray-900 text-white font-bold rounded-2xl shadow-md group-hover:bg-blue-600 transition-colors duration-300 flex items-center gap-2"><Upload className="w-4 h-4" />Select Data File</span>
+              <div className="max-w-4xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
+
+                {/* 1. Financial Sheet Upload (Primary) */}
+                <div onClick={() => fileInputRef.current?.click()} className="group cursor-pointer bg-white rounded-[2rem] border border-gray-200 hover:border-blue-500 hover:bg-blue-50/30 transition-all duration-300 p-6 md:p-8 shadow-sm hover:shadow-md flex flex-col items-center text-center justify-center min-h-[240px]">
+                  <div className="bg-blue-50 text-blue-600 p-4 rounded-2xl group-hover:scale-110 group-hover:bg-blue-100 transition-all duration-300 mb-4">
+                    <UploadCloud className="w-8 h-8" />
                   </div>
+                  <h3 className="text-lg font-black text-gray-900">Upload Financial Sheet</h3>
+                  <p className="text-xs font-bold text-gray-500 mt-2 mb-6 px-4">Parse daily attendance and generate site analytics instantly.</p>
+                  <span className="px-6 py-2.5 bg-gray-900 text-white text-xs font-bold rounded-xl shadow-sm group-hover:bg-blue-600 transition-colors duration-300 flex items-center gap-2">
+                    <Upload className="w-3.5 h-3.5" /> Select Data File
+                  </span>
                 </div>
 
+                {/* 2. Master Roster Upload (Secondary) */}
                 <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={rosterInputRef} onChange={handleMasterRosterUpload} />
-                <div onClick={() => rosterInputRef.current?.click()} className="group w-full cursor-pointer bg-emerald-50 rounded-3xl border border-emerald-100 hover:border-emerald-500 hover:bg-emerald-100/50 transition-all duration-300 p-6 shadow-sm text-center flex items-center justify-center gap-4">
-                  <div className="bg-white text-emerald-600 p-3 rounded-xl shadow-sm group-hover:scale-110 transition-all duration-300"><Users className="w-6 h-6" /></div>
-                  <div className="text-left"><p className="text-base font-black text-emerald-900">Sync Master Roster</p><p className="text-xs font-bold text-emerald-600 mt-0.5">Upload a sheet to strictly update worker wages & names</p></div>
+                <div onClick={() => rosterInputRef.current?.click()} className="group cursor-pointer bg-white rounded-[2rem] border border-gray-200 hover:border-emerald-500 hover:bg-emerald-50/30 transition-all duration-300 p-6 md:p-8 shadow-sm hover:shadow-md flex flex-col items-center text-center justify-center min-h-[240px]">
+                  <div className="bg-emerald-50 text-emerald-600 p-4 rounded-2xl group-hover:scale-110 group-hover:bg-emerald-100 transition-all duration-300 mb-4">
+                    <Users className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-lg font-black text-gray-900">Sync Master Roster</h3>
+                  <p className="text-xs font-bold text-gray-500 mt-2 mb-6 px-4">Strictly update worker wages, names, and team assignments.</p>
+                  <span className="px-6 py-2.5 bg-gray-100 text-gray-700 text-xs font-bold rounded-xl shadow-sm group-hover:bg-emerald-600 group-hover:text-white transition-colors duration-300 flex items-center gap-2">
+                    <Upload className="w-3.5 h-3.5" /> Select Roster File
+                  </span>
                 </div>
               </div>
             )}
 
             {dashboardTab === 'records' && (
-              <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-sm border border-gray-100 min-h-[400px]">
-                {isLoadingRecords ? (
-                  <div className="flex justify-center items-center h-48 text-gray-400 font-bold">Loading cloud records...</div>
-                ) : savedSheets.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-48 text-gray-400 space-y-4"><Database className="w-12 h-12 text-gray-200" /><p className="font-semibold text-center">No saved buckets found.<br /><span className="text-sm font-normal">Upload and save a sheet to see it here.</span></p></div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {savedSheets.map((sheet) => (
-                      <div key={sheet.id} onClick={() => loadSavedRecord(sheet)} className="group bg-white hover:bg-blue-50/50 border border-gray-100 hover:border-blue-200 rounded-[1.5rem] p-6 cursor-pointer transition-all flex flex-col justify-between space-y-5 shadow-[0_2px_10px_-3px_rgba(0,0,0,0.05)] hover:shadow-lg">
-                        <div className="flex items-start justify-between">
-                          <div className="bg-blue-50 text-blue-600 p-3.5 rounded-2xl"><FileText className="w-5 h-5" /></div>
-                          <div className="flex gap-1.5">
-                            <button onClick={(e) => deleteRecord(sheet.id, e)} className="text-gray-400 hover:text-red-600 bg-gray-50 hover:bg-white shadow-sm border border-transparent hover:border-red-100 rounded-xl p-2 transition-all" title="Delete Period"><Trash2 className="w-4 h-4" /></button>
-                          </div>
-                        </div>
-                        <div>
-                          <h3 className="font-black text-gray-800 text-base md:text-lg group-hover:text-blue-700" title={sheet.sheetName}>{sheet.sheetName}</h3>
-                          <div className="flex items-center justify-between mt-2">
-                            <span className="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-1 rounded-md">{sheet.id}</span>
-                          </div>
-                        </div>
+              <div className="max-w-4xl mx-auto space-y-4">
+                <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-sm border border-gray-100 min-h-[400px]">
+                  {isLoadingRecords ? (
+                    <div className="flex justify-center items-center h-48 text-gray-400 font-bold">Loading cloud records...</div>
+                  ) : savedSheets.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-48 text-gray-400 space-y-4">
+                      <Database className="w-12 h-12 text-gray-200" />
+                      <p className="font-semibold text-center">No saved buckets found.<br /><span className="text-sm font-normal">Upload and save a sheet to see it here.</span></p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col h-full">
+
+                      {/* 1. The Clean Search Bar */}
+                      <div className="relative mb-6">
+                        <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="Search records by month or ID (e.g. Sep or H1)..."
+                          value={recordSearch}
+                          onChange={(e) => setRecordSearch(e.target.value)}
+                          className="w-full pl-12 pr-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm"
+                        />
+                        {recordSearch && (
+                          <button onClick={() => setRecordSearch("")} className="absolute right-4 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-red-500 transition-colors">
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                )}
+
+                      {/* 2. The Professional List View */}
+                      <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-sm bg-white divide-y divide-gray-100">
+                        {savedSheets.filter(sheet =>
+                          (sheet.sheetName || "").toLowerCase().includes(recordSearch.toLowerCase()) ||
+                          (sheet.id || "").toLowerCase().includes(recordSearch.toLowerCase())
+                        ).length === 0 ? (
+                          <div className="p-8 text-center text-sm font-bold text-gray-400">No records match your search.</div>
+                        ) : (
+                          savedSheets.filter(sheet =>
+                            (sheet.sheetName || "").toLowerCase().includes(recordSearch.toLowerCase()) ||
+                            (sheet.id || "").toLowerCase().includes(recordSearch.toLowerCase())
+                          ).map((sheet) => (
+                            <div
+                              key={sheet.id}
+                              onClick={() => loadSavedRecord(sheet)}
+                              className="group flex items-center justify-between p-4 hover:bg-blue-50/60 cursor-pointer transition-all"
+                            >
+                              <div className="flex items-center gap-4 min-w-0">
+                                <div className="bg-blue-50 text-blue-600 p-2.5 rounded-xl shrink-0 group-hover:bg-white group-hover:shadow-sm border border-transparent group-hover:border-blue-100 transition-all">
+                                  <FileText className="w-5 h-5" />
+                                </div>
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 min-w-0">
+                                  <h3 className="font-black text-gray-900 text-base truncate group-hover:text-blue-700 transition-colors">
+                                    {sheet.sheetName}
+                                  </h3>
+                                  <span className="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 w-max border border-gray-200 group-hover:border-blue-200 group-hover:bg-white group-hover:text-blue-600 transition-all">
+                                    {sheet.id}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={(e) => deleteRecord(sheet.id, e)}
+                                className="text-gray-300 hover:text-red-600 p-2 rounded-lg hover:bg-red-50 transition-all sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
+                                title="Delete Period"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
             {dashboardTab === 'analytics' && (
-              <div className="max-w-4xl mx-auto space-y-6">
-                <div className="bg-white px-6 py-10 md:p-12 rounded-[2.5rem] shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07),0_10px_20px_-2px_rgba(0,0,0,0.04)] border border-gray-100 text-center">
-                  <h2 className="text-xl md:text-2xl font-black text-gray-900 mb-8 tracking-tight">Master Site Analytics</h2>
+              <div className="max-w-5xl mx-auto space-y-6">
 
-                  <div className="flex justify-center mb-8">
-                    <div className="bg-gray-50 border border-gray-100 p-1.5 rounded-2xl inline-flex shadow-inner">
-                      <button onClick={() => setAnalyticsMode('single')} className={`px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${analyticsMode === 'single' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                        <Search className={`w-4 h-4 ${analyticsMode === 'single' ? 'text-blue-600' : 'text-gray-400'}`} /> Single Site Lookup
+                {/* Modern Analytics Control Panel */}
+                <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-6 md:p-8">
+
+                  {/* Top Row: Title & Toggle */}
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                    <div>
+                      <h2 className="text-xl md:text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2">
+                        <BarChart3 className="w-6 h-6 text-blue-600" /> Master Site Analytics
+                      </h2>
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Generate Insights Across All Periods</p>
+                    </div>
+
+                    <div className="bg-gray-50 border border-gray-100 p-1.5 rounded-2xl inline-flex shadow-inner w-full md:w-auto">
+                      <button onClick={() => setAnalyticsMode('single')} className={`flex-1 md:flex-none px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${analyticsMode === 'single' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                        <Search className={`w-4 h-4 ${analyticsMode === 'single' ? 'text-blue-600' : 'text-gray-400'}`} /> Single Lookup
                       </button>
-                      <button onClick={() => setAnalyticsMode('compare')} className={`px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${analyticsMode === 'compare' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                        <Layers className={`w-4 h-4 ${analyticsMode === 'compare' ? 'text-blue-600' : 'text-gray-400'}`} /> Multi-Site Compare
+                      <button onClick={() => setAnalyticsMode('compare')} className={`flex-1 md:flex-none px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${analyticsMode === 'compare' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                        <Layers className={`w-4 h-4 ${analyticsMode === 'compare' ? 'text-blue-600' : 'text-gray-400'}`} /> Compare
                       </button>
                     </div>
                   </div>
 
-                  {analyticsMode === 'single' ? (
-                    <div className="relative w-full max-w-md mx-auto mb-8">
-                      <Search className="w-5 h-5 absolute left-5 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input type="text" placeholder="Enter site code..." value={globalSearch} onChange={(e) => setGlobalSearch(e.target.value)} className="w-full pl-14 pr-4 py-4 bg-gray-50/80 border border-gray-200 rounded-2xl text-base font-bold focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white focus:border-blue-500 transition-all shadow-sm" />
-                    </div>
-                  ) : (
-                    <div className="w-full max-w-xl mx-auto mb-8">
-                      <form onSubmit={handleAddCompareSite} className="flex flex-col sm:flex-row items-center gap-3">
-                        <div className="relative flex-1 w-full">
-                          <Plus className="w-5 h-5 absolute left-5 top-1/2 -translate-y-1/2 text-gray-400" />
-                          <input type="text" placeholder="Type site code (e.g. S01) & press Enter..." value={compareSiteInput} onChange={(e) => setCompareSiteInput(e.target.value)} className="w-full pl-14 pr-4 py-4 bg-gray-50/80 border border-gray-200 rounded-2xl text-base font-bold focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white focus:border-blue-500 transition-all shadow-sm" />
-                        </div>
-                        <button type="submit" className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-2xl font-black flex items-center justify-center gap-2 transition-colors shadow-md">Add</button>
-                      </form>
-                      {compareSitesList.length > 0 && (
-                        <div className="flex flex-wrap gap-2 justify-center mt-5">
-                          {compareSitesList.map(site => (
-                            <div key={site} className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-2.5 rounded-xl text-sm font-black flex items-center gap-2 shadow-sm">
-                              {site}
-                              <button onClick={() => removeCompareSite(site)} className="text-blue-400 hover:text-red-500 transition-colors bg-white rounded-md p-0.5"><X className="w-4 h-4" /></button>
+                  {/* Bottom Row: Search & Dates Side-by-Side */}
+                  <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
+
+                    {/* Dynamic Search Box (Takes up remaining space on left) */}
+                    <div className="w-full flex-1">
+                      {analyticsMode === 'single' ? (
+                        <div ref={searchContainerRef} className="relative w-full text-left">
+                          <Search className="w-5 h-5 absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 z-10" />
+
+                          <input
+                            type="text"
+                            placeholder="Type site code (e.g. IP) or name..."
+                            value={globalSearch}
+                            onFocus={() => setShowSiteDropdown(true)}
+                            onChange={(e) => {
+                              setGlobalSearch(e.target.value);
+                              setShowSiteDropdown(true);
+                            }}
+                            className="w-full pl-14 pr-12 py-3.5 bg-gray-50/80 border border-gray-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white focus:border-blue-500 transition-all shadow-sm"
+                          />
+
+                          {/* Quick Clear 'X' Button */}
+                          {globalSearch && (
+                            <button
+                              onClick={() => {
+                                setGlobalSearch("");
+                                setShowSiteDropdown(false);
+                              }}
+                              className="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 rounded-xl transition-all"
+                              title="Clear search"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          )}
+
+                          {/* Smart Autocomplete Dropdown */}
+                          {showSiteDropdown && masterSites.length > 0 && (
+                            <div className="absolute left-0 right-0 mt-2 bg-white rounded-2xl border border-gray-200 shadow-2xl overflow-hidden z-50 max-h-64 overflow-y-auto custom-scrollbar">
+                              {(() => {
+                                const query = globalSearch.trim().toLowerCase();
+
+                                // Filter sites matching either code or name
+                                const matched = masterSites.filter(s => {
+                                  const code = getSiteCode(s).toLowerCase();
+                                  const display = getSiteDisplay(s).toLowerCase();
+                                  return !query || code.includes(query) || display.includes(query);
+                                });
+
+                                // Sort: Exact code matches go straight to the top (#1)
+                                const sortedMatches = [...matched].sort((a, b) => {
+                                  const codeA = getSiteCode(a).toLowerCase();
+                                  const codeB = getSiteCode(b).toLowerCase();
+                                  if (codeA === query) return -1;
+                                  if (codeB === query) return 1;
+                                  return 0;
+                                });
+
+                                if (sortedMatches.length === 0) {
+                                  return (
+                                    <div className="p-4 text-xs font-bold text-gray-400 text-center">
+                                      No site found matching "{globalSearch}"
+                                    </div>
+                                  );
+                                }
+
+                                return sortedMatches.map((siteStr, idx) => {
+                                  const code = getSiteCode(siteStr);
+                                  const isExact = query && code.toLowerCase() === query;
+
+                                  return (
+                                    <div
+                                      key={idx}
+                                      onClick={() => {
+                                        setGlobalSearch(code);
+                                        setShowSiteDropdown(false);
+                                      }}
+                                      className={`px-4 py-3 cursor-pointer flex items-center justify-between border-b border-gray-50 last:border-0 hover:bg-blue-50/70 transition-colors ${isExact ? 'bg-blue-50/40' : ''}`}
+                                    >
+                                      <div className="flex items-center gap-2.5 min-w-0">
+                                        <span className="px-2.5 py-1 bg-blue-100 text-blue-700 text-xs font-black rounded-lg shrink-0">
+                                          {code}
+                                        </span>
+                                        <span className="text-sm font-bold text-gray-800 truncate">
+                                          {siteStr.includes('|') ? siteStr.split('|')[1] : siteStr}
+                                        </span>
+                                      </div>
+                                      {isExact && (
+                                        <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-100/60 px-2 py-0.5 rounded-full shrink-0">
+                                          Exact Code
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                });
+                              })()}
                             </div>
-                          ))}
+                          )}
+                        </div>
+                      ) : (
+                        <div className="w-full">
+                          <div className="flex items-center gap-2">
+
+                            {/* Smart Autocomplete for Compare */}
+                            <div ref={searchContainerRef} className="relative flex-1 text-left">
+                              <Plus className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 z-10" />
+
+                              <input
+                                type="text"
+                                placeholder="Type site code or name..."
+                                value={compareSiteInput}
+                                onFocus={() => setShowSiteDropdown(true)}
+                                onChange={(e) => {
+                                  setCompareSiteInput(e.target.value);
+                                  setShowSiteDropdown(true);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleAddCompareSite(e);
+                                  }
+                                }}
+                                className="w-full pl-12 pr-12 py-3.5 bg-gray-50/80 border border-gray-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white focus:border-blue-500 transition-all shadow-sm"
+                              />
+
+                              {compareSiteInput && (
+                                <button
+                                  onClick={() => {
+                                    setCompareSiteInput("");
+                                    setShowSiteDropdown(false);
+                                  }}
+                                  className="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 rounded-xl transition-all"
+                                  title="Clear"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              )}
+
+                              {/* Smart Autocomplete Dropdown */}
+                              {showSiteDropdown && masterSites.length > 0 && (
+                                <div className="absolute left-0 right-0 mt-2 bg-white rounded-2xl border border-gray-200 shadow-2xl overflow-hidden z-50 max-h-64 overflow-y-auto custom-scrollbar">
+                                  {(() => {
+                                    const query = compareSiteInput.trim().toLowerCase();
+
+                                    const matched = masterSites.filter(s => {
+                                      const code = getSiteCode(s).toLowerCase();
+                                      const display = getSiteDisplay(s).toLowerCase();
+                                      return !query || code.includes(query) || display.includes(query);
+                                    });
+
+                                    const sortedMatches = [...matched].sort((a, b) => {
+                                      const codeA = getSiteCode(a).toLowerCase();
+                                      const codeB = getSiteCode(b).toLowerCase();
+                                      if (codeA === query) return -1;
+                                      if (codeB === query) return 1;
+                                      return 0;
+                                    });
+
+                                    if (sortedMatches.length === 0) {
+                                      return (
+                                        <div className="p-4 text-xs font-bold text-gray-400 text-center">
+                                          No site found matching "{compareSiteInput}"
+                                        </div>
+                                      );
+                                    }
+
+                                    return sortedMatches.map((siteStr, idx) => {
+                                      const code = getSiteCode(siteStr);
+                                      const isExact = query && code.toLowerCase() === query;
+
+                                      return (
+                                        <div
+                                          key={idx}
+                                          onClick={() => {
+                                            if (!compareSitesList.includes(code.toUpperCase())) {
+                                              setCompareSitesList([...compareSitesList, code.toUpperCase()]);
+                                            }
+                                            setCompareSiteInput("");
+                                            setShowSiteDropdown(false);
+                                          }}
+                                          className={`px-4 py-3 cursor-pointer flex items-center justify-between border-b border-gray-50 last:border-0 hover:bg-blue-50/70 transition-colors ${isExact ? 'bg-blue-50/40' : ''}`}
+                                        >
+                                          <div className="flex items-center gap-2.5 min-w-0">
+                                            <span className="px-2.5 py-1 bg-blue-100 text-blue-700 text-xs font-black rounded-lg shrink-0">
+                                              {code}
+                                            </span>
+                                            <span className="text-sm font-bold text-gray-800 truncate">
+                                              {siteStr.includes('|') ? siteStr.split('|')[1] : siteStr}
+                                            </span>
+                                          </div>
+                                          {isExact && (
+                                            <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-100/60 px-2 py-0.5 rounded-full shrink-0">
+                                              Exact Code
+                                            </span>
+                                          )}
+                                        </div>
+                                      );
+                                    });
+                                  })()}
+                                </div>
+                              )}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={handleAddCompareSite}
+                              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3.5 rounded-2xl font-black flex items-center justify-center gap-2 transition-colors shadow-sm shrink-0"
+                            >
+                              Add
+                            </button>
+                          </div>
+
+                          {/* Selected Badges */}
+                          {compareSitesList.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-3">
+                              {compareSitesList.map(site => (
+                                <div key={site} className="bg-blue-50 border border-blue-200 text-blue-800 px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-2 shadow-sm">
+                                  {site}
+                                  <button onClick={() => removeCompareSite(site)} className="text-blue-400 hover:text-red-500 transition-colors bg-white rounded-md p-0.5"><X className="w-3 h-3" /></button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
-                  )}
 
-                  <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-8 border-t border-gray-100 max-w-2xl mx-auto">
-                    <div className="flex items-center bg-gray-50 border border-gray-200 rounded-[1.25rem] p-1.5 shadow-inner w-full sm:w-auto">
-                      <div className="flex items-center bg-white px-4 py-2.5 rounded-xl shadow-sm border border-gray-100 flex-1 sm:w-40 relative">
-                        <Calendar className="w-4 h-4 text-blue-500 mr-3 shrink-0" />
+                    {/* Date Pickers (Pushed to the right) */}
+                    <div className="flex items-center bg-gray-50 border border-gray-200 rounded-2xl p-1.5 shadow-inner w-full lg:w-auto shrink-0">
+                      <div className="flex items-center bg-white px-3 py-2 rounded-xl shadow-sm border border-gray-100 relative w-full sm:w-36">
+                        <Calendar className="w-3.5 h-3.5 text-blue-500 mr-2 shrink-0" />
                         <div className="flex flex-col items-start w-full">
                           <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Start Date</span>
                           <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full text-xs font-black text-gray-800 outline-none bg-transparent cursor-pointer leading-none" />
                         </div>
                       </div>
-                      <span className="px-3 text-gray-300 font-black text-xs shrink-0">to</span>
-                      <div className="flex items-center bg-white px-4 py-2.5 rounded-xl shadow-sm border border-gray-100 flex-1 sm:w-40 relative">
-                        <Calendar className="w-4 h-4 text-gray-500 mr-3 shrink-0" />
+                      <span className="px-2 text-gray-300 font-black text-[10px] shrink-0">to</span>
+                      <div className="flex items-center bg-white px-3 py-2 rounded-xl shadow-sm border border-gray-100 relative w-full sm:w-36">
+                        <Calendar className="w-3.5 h-3.5 text-gray-500 mr-2 shrink-0" />
                         <div className="flex flex-col items-start w-full">
                           <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">End Date</span>
                           <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full text-xs font-black text-gray-800 outline-none bg-transparent cursor-pointer leading-none" />
                         </div>
                       </div>
+                      {(startDate || endDate) && (
+                        <button onClick={() => { setStartDate(""); setEndDate(""); }} className="ml-1.5 p-2 bg-red-50 hover:bg-red-100 text-red-500 rounded-xl transition-colors border border-red-100 shrink-0 shadow-sm" title="Clear Dates"><X className="w-4 h-4" /></button>
+                      )}
                     </div>
-                    {(startDate || endDate) && (
-                      <button onClick={() => { setStartDate(""); setEndDate(""); }} className="p-4 bg-red-50 hover:bg-red-100 text-red-500 rounded-[1.25rem] transition-colors border border-red-100 shrink-0 shadow-sm" title="Clear Dates"><X className="w-5 h-5" /></button>
-                    )}
+
                   </div>
                 </div>
-
                 {analyticsMode === 'single' && globalSearch.trim() && analyticsData && (
                   <>
                     {analyticsData.results.length === 0 ? (
@@ -1375,7 +1711,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
                         <div className="bg-gray-900 p-6 md:p-8 rounded-[2rem] shadow-2xl border border-gray-800">
                           <h3 className="text-white font-black text-center text-lg md:text-xl mb-6 tracking-wider flex items-center justify-center gap-2">
-                            <Database className="w-5 h-5 text-blue-400" /> TOTALS FOR "{globalSearch.toUpperCase()}"
+                            <Database className="w-5 h-5 text-blue-400" /> TOTALS FOR {getFullSiteName(globalSearch).toUpperCase()}
                           </h3>
                           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 text-xs">
                             <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-gray-400 font-bold mb-1 uppercase text-[10px] tracking-wider">Mason Days</p><p className="text-2xl md:text-3xl font-black text-white">{analyticsData.totals.masonReg}</p></div>

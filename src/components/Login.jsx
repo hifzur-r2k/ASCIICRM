@@ -1,19 +1,56 @@
 import React, { useState } from 'react';
 import { Lock, Eye, EyeOff } from 'lucide-react';
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from '../firebase'; 
+import { collection, addDoc } from "firebase/firestore";
+import { auth, db } from '../firebase'; 
+
+// Helper function to capture session metadata
+const recordAdminSession = async (userEmail) => {
+  const agent = navigator.userAgent;
+  const isMobile = /Mobile|Android|iP(ad|hone)/i.test(agent);
+  const deviceType = isMobile ? 'Mobile' : 'Desktop PC';
+
+  let ipData = { ip: "Unavailable", city: "Unknown", region: "Unknown", country_name: "Unknown" };
+
+  try {
+    const res = await fetch('https://ipapi.co/json/');
+    if (res.ok) {
+      ipData = await res.json();
+    }
+  } catch (netErr) {
+    // Continues cleanly if an ad-blocker or browser shield stops the IP service
+  }
+
+  try {
+    await addDoc(collection(db, "admin_sessions"), {
+      email: userEmail,
+      ip: ipData.ip || "Unavailable",
+      city: ipData.city || "Unknown",
+      region: ipData.region || "Unknown",
+      country: ipData.country_name || "Unknown",
+      device: deviceType,
+      browserAgent: agent,
+      timestamp: Date.now(),
+      loginTime: new Date().toLocaleString('en-IN')
+    });
+  } catch (dbErr) {
+    console.error("Firestore session record failed:", dbErr);
+  }
+};
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false); // NEW: State to toggle visibility
+  const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState("");
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoginError("");
     try { 
-      await signInWithEmailAndPassword(auth, email, password); 
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      // Wait for session record to save before the dashboard view loads
+      await recordAdminSession(cred.user?.email || email);
     } catch (err) { 
       setLoginError("Invalid email or password. Please try again."); 
     }
@@ -32,12 +69,17 @@ export default function Login() {
         <form onSubmit={handleLogin} className="space-y-5">
           <div>
             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full px-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+            <input 
+              type="email" 
+              value={email} 
+              onChange={(e) => setEmail(e.target.value)} 
+              required 
+              className="w-full px-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" 
+            />
           </div>
           
           <div>
             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Password</label>
-            {/* NEW: Relative wrapper with toggle button */}
             <div className="relative w-full">
               <input 
                 type={showPassword ? "text" : "password"} 
