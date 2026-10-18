@@ -231,6 +231,26 @@ export default function AdminDashboard({ currentUser, onLogout }) {
     const match = masterSites.find(s => getSiteCode(s).toLowerCase() === codeToFind.toLowerCase());
     return match ? getSiteDisplay(match) : codeToFind;
   };
+  // --- COLORED SITE BADGE GENERATOR ---
+  const StyledSiteName = ({ codeToFind, isHeader = false }) => {
+    if (!codeToFind) return <span>Unknown</span>;
+    const match = masterSites.find(s => getSiteCode(s).toLowerCase() === codeToFind.toLowerCase());
+
+    if (match && match.includes('|')) {
+      const parts = match.split('|');
+      return (
+        <span className="inline-flex items-center gap-2 align-middle">
+          <span className={isHeader ? "text-white" : "text-gray-800"}>
+            {isHeader ? parts[1].toUpperCase() : parts[1]}
+          </span>
+          <span className={`text-[10px] font-black px-2 py-1 rounded-md uppercase tracking-widest leading-none ${isHeader ? 'text-blue-300 bg-blue-500/20' : 'text-blue-600 bg-blue-50 border border-blue-100'}`}>
+            {parts[0]}
+          </span>
+        </span>
+      );
+    }
+    return <span className={isHeader ? "text-white" : "text-gray-800"}>{isHeader ? codeToFind.toUpperCase() : codeToFind}</span>;
+  };
 
   const defaultContractors = ["Arvind", "Laljeet", "Deepak"];
   const dynamicContractors = Array.from(new Set([...defaultContractors, ...masterWorkers.map(w => w.contractor)])).filter(Boolean);
@@ -851,6 +871,90 @@ export default function AdminDashboard({ currentUser, onLogout }) {
   };
   const multiSiteData = getMultiSiteAnalytics();
 
+  // --- NEW: ALL SITES ANALYTICS & EXPORT ---
+  const getAllSitesAnalytics = () => {
+    let matrix = [];
+    let totals = { masonReg: 0, masonOT: 0, halfMasonReg: 0, halfMasonOT: 0, helperReg: 0, helperOT: 0, totalDays: 0, totalOT: 0, totalSpend: 0 };
+    let siteMap = {};
+
+    savedSheets.forEach(sheet => {
+      const sMonth = sheet.id.substring(0, 7);
+      (sheet.dayData || []).forEach(d => {
+        if (!d.site) return; // ADD THIS LINE: Safely skips any blank/empty rows!
+
+        const recordDateStr = `${sMonth}-${String(d.day).padStart(2, '0')}`;
+        let inRange = true;
+        if (startDate && recordDateStr < startDate) inRange = false;
+        if (endDate && recordDateStr > endDate) inRange = false;
+
+        if (inRange) {
+          const sCode = getSiteCode(d.site).toUpperCase();
+          if (!siteMap[sCode]) {
+            siteMap[sCode] = { site: d.site, occurrences: 0, masonReg: 0, masonOT: 0, halfMasonReg: 0, halfMasonOT: 0, helperReg: 0, helperOT: 0, siteSpend: 0 };
+          }
+          siteMap[sCode].occurrences++;
+          siteMap[sCode].masonReg += d.masonReg || 0;
+          siteMap[sCode].masonOT += d.masonOT || 0;
+          siteMap[sCode].halfMasonReg += d.halfMasonReg || 0;
+          siteMap[sCode].halfMasonOT += d.halfMasonOT || 0;
+          siteMap[sCode].helperReg += d.helperReg || 0;
+          siteMap[sCode].helperOT += d.helperOT || 0;
+          siteMap[sCode].siteSpend += (d.totalBaseCost || 0) + (d.totalOTCost || 0);
+        }
+      });
+    });
+
+    matrix = Object.values(siteMap).map(sTotals => {
+      totals.masonReg += sTotals.masonReg; totals.masonOT += sTotals.masonOT;
+      totals.halfMasonReg += sTotals.halfMasonReg; totals.halfMasonOT += sTotals.halfMasonOT;
+      totals.helperReg += sTotals.helperReg; totals.helperOT += sTotals.helperOT;
+      totals.totalDays += sTotals.masonReg + sTotals.halfMasonReg + sTotals.helperReg;
+      totals.totalOT += sTotals.masonOT + sTotals.halfMasonOT + sTotals.helperOT;
+      totals.totalSpend += sTotals.siteSpend;
+      return { ...sTotals, totalDays: sTotals.masonReg + sTotals.halfMasonReg + sTotals.helperReg, totalOT: sTotals.masonOT + sTotals.halfMasonOT + sTotals.helperOT };
+    });
+
+    matrix.sort((a, b) => getSiteCode(a.site).localeCompare(getSiteCode(b.site)));
+    return { matrix, totals };
+  };
+  const allSitesData = getAllSitesAnalytics();
+
+  const exportAllSitesToExcel = () => {
+    if (!allSitesData || allSitesData.matrix.length === 0) return alert("No data to export.");
+    let aoa = [
+      ["CRM_FIX - ALL SITES MASTER REPORT"],
+      [`Date Range: ${startDate ? new Date(startDate).toLocaleDateString() : 'Start of Records'} to ${endDate ? new Date(endDate).toLocaleDateString() : 'Present'}`],
+      [],
+      ["Site Code", "Full Site Name", "Mason Days", "Mason OT (h)", "HM Days", "HM OT (h)", "Helper Days", "Helper OT (h)", "Total Days", "Total Spend (Rs)"]
+    ];
+
+    allSitesData.matrix.forEach(row => {
+      const fullSiteName = getFullSiteName(row.site);
+      const nameOnly = fullSiteName.includes('(') ? fullSiteName.split(' (')[0].trim() : fullSiteName;
+      aoa.push([
+        getSiteCode(row.site), nameOnly,
+        row.masonReg, row.masonOT,
+        row.halfMasonReg, row.halfMasonOT,
+        row.helperReg, row.helperOT,
+        row.totalDays, row.siteSpend
+      ]);
+    });
+
+    aoa.push([]);
+    aoa.push([
+      "GRAND TOTAL", "",
+      allSitesData.totals.masonReg, allSitesData.totals.masonOT,
+      allSitesData.totals.halfMasonReg, allSitesData.totals.halfMasonOT,
+      allSitesData.totals.helperReg, allSitesData.totals.helperOT,
+      allSitesData.totals.totalDays, allSitesData.totals.totalSpend
+    ]);
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "All Sites Data");
+    XLSX.writeFile(wb, `CRM_FIX_All_Sites_${startDate || 'All'}_to_${endDate || 'All'}.xlsx`);
+  };
+
   const activeData = activeTab === 'site' ? siteData : activeTab === 'day' ? dayData : workerData;
   const contractorFilteredData = selectedRecordContractor ? activeData.filter(row => row.contractor === selectedRecordContractor) : activeData;
   const filteredData = contractorFilteredData.filter(row => row.site ? getFullSiteName(row.site).toLowerCase().includes(searchQuery.toLowerCase()) : row.worker.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -979,7 +1083,7 @@ export default function AdminDashboard({ currentUser, onLogout }) {
       doc.setFontSize(22); doc.setTextColor(15, 23, 42);
       doc.text("Financial & Attendance Report", 14, 20);
       doc.setFontSize(10); doc.setTextColor(100, 116, 139);
-      doc.text(`CONTRACTOR: ${selectedRecordContractor.toUpperCase()}   |   PERIOD: ${sheetName.toUpperCase()}   |   VIEW: ${activeTab.toUpperCase()}-WISE`, 14, 28);
+      doc.text(`CONTRACTOR: ${selectedRecordContractor.toUpperCase()}   |   PERIOD: ${sheetName.toUpperCase()}   |   VIEW: ${activeTab.toUpperCase()}-WISE`, 14, 28);
 
       let head = []; let body = []; let foot = [];
       let dynamicColStyles = {};
@@ -999,12 +1103,12 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
         let cIdx = 0;
         dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 10 }; // SN
-        dynamicColStyles[cIdx++] = { halign: 'left', cellWidth: 42 };   // Name
+        dynamicColStyles[cIdx++] = { halign: 'left', cellWidth: 42 };   // Name
         daysArray.forEach(() => { dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 11 }; }); // Days
         dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 14, fillColor: colGreen }; // Total Days
         dynamicColStyles[cIdx++] = { halign: 'center', cellWidth: 14, fillColor: colYellow }; // Total OT
-        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 18, fillColor: colBlue };  // Wage
-        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 18, fillColor: colBlue };  // OT Rate
+        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 18, fillColor: colBlue };  // Wage
+        dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 18, fillColor: colBlue };  // OT Rate
         dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 22, fillColor: colBlue }; // Wage Amt
         dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 20, fillColor: colBlue }; // OT Amt
         dynamicColStyles[cIdx++] = { halign: 'right', cellWidth: 26, fontStyle: 'bold', textColor: [15, 23, 42], fillColor: [203, 213, 225] }; // Payout
@@ -1125,11 +1229,11 @@ export default function AdminDashboard({ currentUser, onLogout }) {
               if (typeof data.cell.raw === 'string') {
                 if (data.cell.raw === "0 NA") {
                   data.cell.styles.fillColor = [254, 226, 226]; // Light Red background
-                  data.cell.styles.textColor = [185, 28, 28];   // Dark Red text
+                  data.cell.styles.textColor = [185, 28, 28];   // Dark Red text
                   data.cell.styles.fontStyle = 'bold';
                 } else if (data.cell.raw !== "") {
                   data.cell.styles.fillColor = [220, 252, 231]; // Light Green background
-                  data.cell.styles.textColor = [4, 120, 87];    // Dark Green text
+                  data.cell.styles.textColor = [4, 120, 87];    // Dark Green text
                   data.cell.styles.fontStyle = 'bold';
                 }
               }
@@ -1411,12 +1515,15 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                       <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Generate Insights Across All Periods</p>
                     </div>
 
-                    <div className="bg-gray-50 border border-gray-100 p-1.5 rounded-2xl inline-flex shadow-inner w-full md:w-auto">
-                      <button onClick={() => setAnalyticsMode('single')} className={`flex-1 md:flex-none px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${analyticsMode === 'single' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                    <div className="bg-gray-50 border border-gray-100 p-1.5 rounded-2xl inline-flex shadow-inner w-full md:w-auto overflow-x-auto custom-scrollbar">
+                      <button onClick={() => setAnalyticsMode('single')} className={`flex-1 md:flex-none px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap ${analyticsMode === 'single' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                         <Search className={`w-4 h-4 ${analyticsMode === 'single' ? 'text-blue-600' : 'text-gray-400'}`} /> Single Lookup
                       </button>
-                      <button onClick={() => setAnalyticsMode('compare')} className={`flex-1 md:flex-none px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${analyticsMode === 'compare' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                      <button onClick={() => setAnalyticsMode('compare')} className={`flex-1 md:flex-none px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap ${analyticsMode === 'compare' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
                         <Layers className={`w-4 h-4 ${analyticsMode === 'compare' ? 'text-blue-600' : 'text-gray-400'}`} /> Compare
+                      </button>
+                      <button onClick={() => setAnalyticsMode('all')} className={`flex-1 md:flex-none px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 whitespace-nowrap ${analyticsMode === 'all' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                        <Database className={`w-4 h-4 ${analyticsMode === 'all' ? 'text-white' : 'text-gray-400'}`} /> All Sites
                       </button>
                     </div>
                   </div>
@@ -1424,9 +1531,14 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                   {/* Bottom Row: Search & Dates Side-by-Side */}
                   <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center">
 
-                    {/* Dynamic Search Box (Takes up remaining space on left) */}
+                    {/* Dynamic Search Box */}
                     <div className="w-full flex-1">
-                      {analyticsMode === 'single' ? (
+                      {analyticsMode === 'all' ? (
+                        <div className="bg-emerald-50 border border-emerald-100 rounded-2xl px-6 py-4 flex items-center gap-3 shadow-sm">
+                          <MapPin className="w-5 h-5 text-emerald-600" />
+                          <p className="text-emerald-800 font-bold text-sm">Viewing all active sites across selected dates</p>
+                        </div>
+                      ) : analyticsMode === 'single' ? (
                         <div ref={searchContainerRef} className="relative w-full text-left">
                           <Search className="w-5 h-5 absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 z-10" />
 
@@ -1790,6 +1902,76 @@ export default function AdminDashboard({ currentUser, onLogout }) {
                         <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-purple-400 font-bold mb-1 uppercase text-[10px] tracking-wider">HM Days</p><p className="text-2xl md:text-3xl font-black text-purple-200">{multiSiteData.totals.halfMasonReg}</p></div>
                         <div className="bg-gray-800/80 p-4 rounded-2xl"><p className="text-orange-400 font-bold mb-1 uppercase text-[10px] tracking-wider">Helper Days</p><p className="text-2xl md:text-3xl font-black text-white">{multiSiteData.totals.helperReg}</p></div>
                         <div className="bg-emerald-600 border border-emerald-500 p-4 rounded-2xl"><p className="text-emerald-100 font-bold mb-1 uppercase text-[10px] tracking-wider">Total Financial Spend</p><p className="text-2xl md:text-3xl font-black text-white">{formatCurrency(multiSiteData.totals.totalSpend)}</p></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {/* NEW: ALL SITES MASTER TABLE */}
+                {analyticsMode === 'all' && allSitesData && (
+                  <div className="space-y-6 animate-in fade-in duration-300">
+                    <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+
+                      {/* Header & Excel Button */}
+                      <div className="bg-gray-50 border-b border-gray-100 p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                        <div className="font-bold text-gray-600 text-xs md:text-sm uppercase tracking-wider">
+                          Master Overview <span className="text-gray-400 normal-case font-medium">({allSitesData.matrix.length} sites)</span>
+                        </div>
+                        <button onClick={exportAllSitesToExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-black text-xs flex items-center gap-2 transition-colors shadow-sm">
+                          <Download className="w-4 h-4" /> Download to Excel
+                        </button>
+                      </div>
+
+                      {/* Full Data Table */}
+                      <div className="overflow-x-auto custom-scrollbar">
+                        <table className="w-full text-sm text-left">
+                          <thead className="bg-white uppercase text-[10px] md:text-[11px] font-black tracking-wider text-gray-500 border-b border-gray-100">
+                            <tr>
+                              <th className="px-3.5 py-4 border-r border-gray-50">Site Details</th>
+                              <th className="px-3.5 py-4 border-r border-gray-50 text-blue-800 bg-blue-50/40">Mason D</th>
+                              <th className="px-3.5 py-4 border-r border-gray-50 text-blue-800 bg-blue-50/40">Mason OT</th>
+                              <th className="px-3.5 py-4 border-r border-gray-50 text-purple-800 bg-purple-50/40">HM Days</th>
+                              <th className="px-3.5 py-4 border-r border-gray-50 text-purple-800 bg-purple-50/40">HM OT</th>
+                              <th className="px-3.5 py-4 border-r border-gray-50 text-orange-800 bg-orange-50/40">Helper D</th>
+                              <th className="px-3.5 py-4 border-r border-gray-50 text-orange-800 bg-orange-50/40">Helper OT</th>
+                              <th className="px-3.5 py-4 text-gray-900 bg-gray-100/60 font-black border-r border-gray-50">Total Days</th>
+                              <th className="px-3.5 py-4 text-emerald-800 bg-emerald-50/60 font-black">Labor Cost</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {allSitesData.matrix.length === 0 ? (
+                              <tr><td colSpan="9" className="text-center py-10 font-bold text-gray-400">No data found in this date range.</td></tr>
+                            ) : (
+                              allSitesData.matrix.map((row, idx) => (
+                                <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50/60 transition-colors">
+                                  <td className="px-3.5 py-4 font-black border-r border-gray-50"><StyledSiteName codeToFind={row.site} isHeader={false} /></td>
+                                  <td className="px-3.5 py-4 font-bold text-blue-900 border-r border-gray-50">{row.masonReg}</td>
+                                  <td className="px-3.5 py-4 text-blue-700 border-r border-gray-50">{row.masonOT} <span className="text-[10px] text-gray-400">h</span></td>
+                                  <td className="px-3.5 py-4 font-bold text-purple-900 border-r border-gray-50">{row.halfMasonReg}</td>
+                                  <td className="px-3.5 py-4 text-purple-700 border-r border-gray-50">{row.halfMasonOT} <span className="text-[10px] text-gray-400">h</span></td>
+                                  <td className="px-3.5 py-4 font-bold text-orange-900 border-r border-gray-50">{row.helperReg}</td>
+                                  <td className="px-3.5 py-4 text-orange-700 border-r border-gray-50">{row.helperOT} <span className="text-[10px] text-gray-400">h</span></td>
+                                  <td className="px-3.5 py-4 font-black text-gray-900 bg-gray-50/50 border-r border-gray-100">{row.totalDays}</td>
+                                  <td className="px-3.5 py-4 font-black text-emerald-700 bg-emerald-50/30">{formatCurrency(row.siteSpend)}</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                          {allSitesData.matrix.length > 0 && (
+                            <tfoot className="bg-gray-100/80 font-black text-gray-900 border-t-2 border-gray-200">
+                              <tr>
+                                <td className="px-3.5 py-4 border-r border-gray-200 uppercase tracking-widest text-[11px]">Grand Total:</td>
+                                <td className="px-3.5 py-4 text-blue-900 border-r border-gray-200 text-base">{allSitesData.totals.masonReg}</td>
+                                <td className="px-3.5 py-4 text-blue-700 border-r border-gray-200">{allSitesData.totals.masonOT} h</td>
+                                <td className="px-3.5 py-4 text-purple-900 border-r border-gray-200 text-base">{allSitesData.totals.halfMasonReg}</td>
+                                <td className="px-3.5 py-4 text-purple-700 border-r border-gray-200">{allSitesData.totals.halfMasonOT} h</td>
+                                <td className="px-3.5 py-4 text-orange-900 border-r border-gray-200 text-base">{allSitesData.totals.helperReg}</td>
+                                <td className="px-3.5 py-4 text-orange-700 border-r border-gray-200">{allSitesData.totals.helperOT} h</td>
+                                <td className="px-3.5 py-4 text-gray-900 text-base bg-gray-200/70 border-r border-gray-300">{allSitesData.totals.totalDays}</td>
+                                <td className="px-3.5 py-4 text-emerald-900 text-base bg-emerald-100/70">{formatCurrency(allSitesData.totals.totalSpend)}</td>
+                              </tr>
+                            </tfoot>
+                          )}
+                        </table>
                       </div>
                     </div>
                   </div>
@@ -2379,22 +2561,22 @@ export default function AdminDashboard({ currentUser, onLogout }) {
 
           <style>
             {`
-              @media print {
-                /* 1. Hide the background and main app */
-                body { background-color: white !important; }
-                header, .min-h-screen > :not(.fixed) { display: none !important; }
-                
-                /* 2. Reset the modal to flat document flow (Fixes the multipage overlap bug) */
-                .fixed { position: static !important; background: transparent !important; padding: 0 !important; height: auto !important; }
-                .max-h-[90vh], .overflow-y-auto { max-height: none !important; overflow: visible !important; }
-                
-                /* 3. Hide buttons on paper */
-                .print-hide { display: none !important; }
-                
-                /* 4. Stop sites from breaking in half across pages */
-                .print-section { page-break-inside: avoid !important; break-inside: avoid !important; }
-              }
-            `}
+              @media print {
+                /* 1. Hide the background and main app */
+                body { background-color: white !important; }
+                header, .min-h-screen > :not(.fixed) { display: none !important; }
+                
+                /* 2. Reset the modal to flat document flow (Fixes the multipage overlap bug) */
+                .fixed { position: static !important; background: transparent !important; padding: 0 !important; height: auto !important; }
+                .max-h-[90vh], .overflow-y-auto { max-height: none !important; overflow: visible !important; }
+                
+                /* 3. Hide buttons on paper */
+                .print-hide { display: none !important; }
+                
+                /* 4. Stop sites from breaking in half across pages */
+                .print-section { page-break-inside: avoid !important; break-inside: avoid !important; }
+              }
+            `}
           </style>
 
           <div className="bg-white rounded-[1.5rem] shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] print:shadow-none print:max-w-full">
